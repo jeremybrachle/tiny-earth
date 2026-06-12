@@ -1,0 +1,28 @@
+# Godot — generated import cache, editor state, shader binaries
+engine/.godot/
+
+# Godot — export credentials (can contain signing keys)
+engine/export_presets.cfg
+
+# Generated planet chunk files (produced by pipeline/src/export.py)
+engine/planet/
+
+# Pipeline — downloaded/cached geodata (OSM, Wikipedia, elevation, etc.)
+data/
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+pipeline/.pytest_cache/
+pipeline/*.egg-info/
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+docs/
+
+.claude/

@@ -1,0 +1,51 @@
+[gd_scene load_steps=9 format=3 uid="uid://r0w83lso6u13"]
+
+[ext_resource type="Script" path="res://scripts/player/player.gd" id="Script_player"]
+[ext_resource type="Script" path="res://scripts/planet/voxel_planet.gd" id="Script_voxel_planet"]
+[ext_resource type="Script" path="res://scripts/world/world.gd" id="Script_world"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_env"]
+
+[sub_resource type="Sky" id="Sky_env"]
+sky_material = SubResource("ProceduralSkyMaterial_env")
+
+[sub_resource type="Environment" id="Environment_env"]
+background_mode = 2
+sky = SubResource("Sky_env")
+ambient_light_source = 3
+ambient_light_energy = 0.5
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_player"]
+radius = 0.4
+height = 1.8
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_player"]
+radius = 0.4
+height = 1.8
+
+[node name="World" type="Node3D"]
+script = ExtResource("Script_world")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_env")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866025, -0.353554, 0.353554, 0, 0.707107, 0.707107, -0.5, -0.612372, 0.612372, 0, 0, 0)
+shadow_enabled = true
+
+[node name="VoxelPlanet" type="StaticBody3D" parent="."]
+script = ExtResource("Script_voxel_planet")
+
+[node name="Player" type="CharacterBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 257.9, 0)
+script = ExtResource("Script_player")
+planet = NodePath("VoxelPlanet")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Player"]
+mesh = SubResource("CapsuleMesh_player")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
+shape = SubResource("CapsuleShape3D_player")
+
+[node name="Camera3D" type="Camera3D" parent="Player"]
+transform = Transform3D(1, 0, 0, 0, 0.965926, 0.258819, 0, -0.258819, 0.965926, 0, 1.6, 4)
