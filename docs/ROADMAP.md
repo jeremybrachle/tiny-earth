@@ -168,13 +168,29 @@ Tiny Semantic Earth is planned in nine phases (0–8) that build from repo scaff
 - README.md updated with screenshots and demo GIF
 - All attribution and legal files verified complete
 
+**Key deliverables (updated):**
+- Splash screen and main menu (new game, spawn point select, quit)
+- Loading screen that displays chunk-build logs while the planet loads in the background; player sees the menu immediately rather than a blank window
+- Spawn point selection — curated list of starting locations (e.g. Times Square, Eiffel Tower, Mount Everest, Amazon rainforest, Sahara, Antarctica)
+- Godot export builds for Windows, macOS, Linux
+- Itch.io or GitHub Releases page with playable download
+- README.md updated with screenshots and demo GIF
+- All attribution and legal files verified complete
+
 **Shippable demo pass/fail checklist:**
 - [ ] Launches and runs on Windows, macOS, Linux without crashing
+- [ ] Splash screen and menu appear before planet finishes loading
 - [ ] Player can walk around the full planet surface
 - [ ] Recognizable continents, elevation, biomes visible
 - [ ] At least 10 landmarks placed and visible
 - [ ] Loads in under 10 seconds on a mid-range laptop
 - [ ] OSM attribution visible in game UI or credits screen
+
+**Performance note — chunk loading:** The six `CubeFace N: building 16×16 chunks` log lines
+currently block the main thread before the first frame renders. Two approaches: (a) run chunk
+builds on a background thread and show a loading bar on a splash screen, or (b) reduce startup
+cost via a pre-baked merged mesh stored as a `.res` file that Godot loads directly. Option (b)
+is faster to implement; option (a) is more flexible.
 
 **Done when:** A stranger can download and run it without a README.
 
@@ -233,3 +249,25 @@ Target venue: IEEE VIS, ACM CHI, or GIScience conference. Working title: *"Seman
 
 ### Stretch D — Tiny Bay Prototype
 Apply the same pipeline to a single bay area (San Francisco Bay, Tokyo Bay) to test whether local-scale semantic compression works with street-level data. Potential separate repo.
+
+### Stretch E — Ambient Audio
+Layered audio system with surface-aware footstep sounds (grass, sand, rock, snow, seafloor),
+water splashing on ocean entry, underwater reverb filter on all sounds while submerged, and
+ambient background music. Music sources: public domain classical recordings (Debussy's *Clair de
+Lune*, Satie *Gymnopédies*, etc.) licensed via Musopen or similar. Long-term idea: collectable
+"records" scattered on each continent that unlock region-specific traditional/folk music —
+finding a record in Japan plays koto music, one in Brazil plays bossa nova, etc.
+
+### Stretch F — Inner Sphere Visual Upgrade
+The inner sphere is currently a low-poly globe with a flat biome texture. Improvements:
+- Higher-resolution sphere mesh (subdivide SphereMesh) to reduce pixelation at close range
+- Separate water shader on ocean regions of the inner sphere (animated surface, subtle
+  translucency) — requires masking the texture by biome type
+- Land regions with slight normal-map bumpiness to read as terrain rather than a painted ball
+- Matches the "dynamic mini-globe" aesthetic rather than a cheap decoration
+
+### Stretch G — City Lights (Night Mode)
+Once Phase 6 cities are placed, add a night-side emissive pass: urban voxel clusters glow
+amber/white on the dark side of the planet. Requires a day/night cycle (see Deferred Decisions)
+or a static night-hemisphere texture. Visually striking from orbit and reinforces the semantic
+compression concept — you can identify continents by their light clusters alone.
