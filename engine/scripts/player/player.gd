@@ -257,8 +257,11 @@ func _break_voxel_aimed() -> void:
 	var vox      := planet_r / float(planet.resolution)
 
 	if r >= planet_r - vox:
-		# Outer shell — outward convention: r_out(d) = planet_r + d*vox
-		var depth: int = clamp(int(round((r - planet_r) / vox)), 0, 15)
+		# Outer shell — outward convention: voxel d occupies the radial band
+		# [planet_r + (d-1)*vox, planet_r + d*vox]. The inverse is
+		# floor((r - planet_r)/vox) + 1 — NOT round(), which was one level too
+		# low and removed the buried depth-0 voxel instead of the surface voxel.
+		var depth: int = clamp(int(floor((r - planet_r) / vox)) + 1, 0, 15)
 		var cf := planet.get_node_or_null("CubeFace_%d" % face)
 		if cf:
 			cf.remove_voxel(col, row, depth)
