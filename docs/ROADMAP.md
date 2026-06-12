@@ -214,6 +214,7 @@ is faster to implement; option (a) is more flexible.
 | 7.9 | Per-chunk collision replaces SphereShape3D; inner shell gets physics; shoreline gap closed; player can fall through excavated terrain and land on seafloor | 6.2 | ✅ |
 | 7.95 | Buoyancy physics (upward force in water, Ctrl to dive); underwater fog camera effect; hollow centre room + OmniLight3D | 6.3 | — |
 | 7.96 | All-planet lake water (1,355 NE10m lakes via `--lakes`); inner cavity biome ceiling art (depth-15 biome + ocean colour); inner sphere Earth map texture (`render_map.py`; `SHADING_MODE_UNSHADED`; `rotation_degrees = Vector3(0, 270, 0)`); unshaded inner shell shader (`inner_voxel.gdshader`) | 6.3 | ✅ |
+| 7.97 | Architecture revamp: outer shell rewritten to per-voxel TYPE B mesher; cross-face neighbor stitching via sphere re-projection (no adjacency table); aim-based left-click digging (raycast → shell/depth dispatch). Visually verified. Open: crosshair HUD, invisible sides at face seams. | 6.4 | ✅ |
 | 8 | OSM fetch + Wikipedia enrich + scoring formula running; top 200 cities placed as Urban voxel clusters | 6 | — |
 | 9 | 20+ landmark meshes placed; skybox added; Godot export builds shipped; portfolio README finalized | 7–8 *(estimate)* | — |
 

@@ -126,7 +126,16 @@ func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, dep
 	var r    := _CubeFaceScript.unit_to_face_col_row(unit, _face_res)
 	var nface := int(r[0])
 	if nface == face_id:
-		return true
+		# Degenerate: boundary pixel projected back to same face.
+		# Nudge u/v inward by half a texel and retry once.
+		var eps: float = 0.5 / float(_face_res)
+		var u2: float = clamp(u, eps, 1.0 - eps)
+		var v2: float = clamp(v, eps, 1.0 - eps)
+		unit = _CubeFaceScript.face_uv_to_unit(face_id, u2, v2)
+		r = _CubeFaceScript.unit_to_face_col_row(unit, _face_res)
+		nface = int(r[0])
+		if nface == face_id:
+			return true  # still degenerate after nudge — treat as solid
 	var nb := get_parent().get_node_or_null("InnerCubeFace_%d" % nface) as InnerCubeFace
 	if nb == null or not is_instance_valid(nb):
 		return true

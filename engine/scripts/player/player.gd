@@ -28,6 +28,7 @@ var _surface_right := Vector3(0, 0, 1)  # parallel-transported; avoids pole sing
 
 var _gravity_field: Node = null   # PlanetGenerator (in group "gravity_field"), looked up lazily
 var _water_overlay: ColorRect = null
+var _crosshair: Label = null
 
 
 func _ready() -> void:
@@ -52,6 +53,19 @@ func _ready() -> void:
 	_water_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_water_overlay.visible = false
 	cl.add_child(_water_overlay)
+
+	var hud_cl := CanvasLayer.new()
+	hud_cl.layer = 11
+	add_child(hud_cl)
+	_crosshair = Label.new()
+	_crosshair.text = "+"
+	_crosshair.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_crosshair.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_crosshair.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_crosshair.add_theme_font_size_override("font_size", 24)
+	_crosshair.visible = true
+	hud_cl.add_child(_crosshair)
 
 
 func _physics_process(delta: float) -> void:
@@ -194,6 +208,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.keycode == KEY_O and event.pressed and not event.echo:
 		_toggle_water()
 
+	if event is InputEventKey and event.keycode == KEY_H and event.pressed and not event.echo:
+		if _crosshair:
+			_crosshair.visible = not _crosshair.visible
+
 
 var _water_visible := true
 
@@ -218,7 +236,7 @@ func _break_voxel_aimed() -> void:
 	var cam_pos := camera.global_position
 	var cam_fwd := -camera.global_basis.z
 	var query   := PhysicsRayQueryParameters3D.create(cam_pos, cam_pos + cam_fwd * DIG_REACH)
-	query.exclude = [self]
+	query.exclude = [get_rid()]
 	var hit := space.intersect_ray(query)
 	if hit.is_empty():
 		return
