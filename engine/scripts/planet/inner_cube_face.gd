@@ -113,12 +113,29 @@ func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, dep
 		return m != 0 and m != 2
 	var col := cx * CHUNK_SIZE + lc
 	var row := cy * CHUNK_SIZE + lr
-	if col < 0 or col >= _face_res or row < 0 or row >= _face_res:
+	if col >= 0 and col < _face_res and row >= 0 and row < _face_res:
+		var nkey := (col / CHUNK_SIZE) * chunks_per_edge + (row / CHUNK_SIZE)
+		if not _chunk_data.has(nkey):
+			return true
+		var nm := ChunkLoader.voxel(_chunk_data[nkey], col % CHUNK_SIZE, row % CHUNK_SIZE, depth)
+		return nm != 0 and nm != 2
+	# Cross-face lookup via sphere re-projection (same pattern as CubeFace).
+	var u    := float(col) / float(_face_res)
+	var v    := float(row) / float(_face_res)
+	var unit := _CubeFaceScript.face_uv_to_unit(face_id, u, v)
+	var r    := _CubeFaceScript.unit_to_face_col_row(unit, _face_res)
+	var nface := int(r[0])
+	if nface == face_id:
 		return true
-	var nkey := (col / CHUNK_SIZE) * chunks_per_edge + (row / CHUNK_SIZE)
-	if not _chunk_data.has(nkey):
+	var nb := get_parent().get_node_or_null("InnerCubeFace_%d" % nface) as InnerCubeFace
+	if nb == null or not is_instance_valid(nb):
 		return true
-	var nm := ChunkLoader.voxel(_chunk_data[nkey], col % CHUNK_SIZE, row % CHUNK_SIZE, depth)
+	var ncol := int(r[1]);  var nrow := int(r[2])
+	var ncx  := ncol / CHUNK_SIZE;  var ncy := nrow / CHUNK_SIZE
+	var nkey := ncx * chunks_per_edge + ncy
+	if not nb._chunk_data.has(nkey):
+		return true
+	var nm := ChunkLoader.voxel(nb._chunk_data[nkey], ncol % CHUNK_SIZE, nrow % CHUNK_SIZE, depth)
 	return nm != 0 and nm != 2
 
 
@@ -268,6 +285,45 @@ func _build_chunk_collision(cx: int, cy: int) -> void:
 	col_shape.shape = shape
 	add_child(col_shape)
 	_chunk_col_shapes[key] = col_shape
+
+
+# Remove a specific voxel by column + depth. Opens the column if it becomes
+# fully empty (chains to open_column so the cavity passage is created).
+func remove_voxel(col: int, row: int, depth: int) -> bool:
+	var cx  := col / CHUNK_SIZE
+	var cy  := row / CHUNK_SIZE
+	var lc  := col % CHUNK_SIZE
+	var lr  := row % CHUNK_SIZE
+	var key := cx * chunks_per_edge + cy
+	if not _chunk_data.has(key):
+		return false
+	var data: PackedByteArray = _chunk_data[key]
+	if ChunkLoader.voxel(data, lc, lr, depth) == 0:
+		return false
+	data[lc + CHUNK_SIZE * (lr + CHUNK_SIZE * depth)] = 0
+	_chunk_data[key] = data
+	# Check if column is now fully empty — if so, open the cavity passage.
+	var has_solid := false
+	for d in CHUNK_SIZE:
+		var m := ChunkLoader.voxel(data, lc, lr, d)
+		if m != 0 and m != 2:
+			has_solid = true
+			break
+	if not has_solid:
+		open_column(col, row)
+		return true
+	_build_chunk_collision.call_deferred(cx, cy)
+	_rebuild_chunk(cx, cy, key)
+	for nb in [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]:
+		var nx: int = nb[0];  var ny: int = nb[1]
+		if nx < 0 or nx >= chunks_per_edge or ny < 0 or ny >= chunks_per_edge:
+			continue
+		if nx == cx and ny == cy:
+			continue
+		var nkey := nx * chunks_per_edge + ny
+		if _chunk_data.has(nkey):
+			_rebuild_chunk(nx, ny, nkey)
+	return true
 
 
 func open_column(col: int, row: int) -> void:
