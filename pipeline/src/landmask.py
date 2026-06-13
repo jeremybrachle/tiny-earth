@@ -23,7 +23,7 @@ import shapely
 import yaml
 from shapely.geometry import shape
 
-from cube_sphere import face_uv_to_xyz, xyz_to_latlon
+from cube_sphere import EQUIANGULAR_ALPHA, face_uv_to_xyz, xyz_to_latlon
 
 MATERIAL_LAND = 1
 MATERIAL_OCEAN = 2
@@ -81,6 +81,9 @@ def build_landmask(
 
     s = u_flat * 2.0 - 1.0
     t = v_flat * 2.0 - 1.0
+    # Equiangular pre-distortion — must match cube_sphere.face_uv_to_xyz.
+    s = np.tan(s * EQUIANGULAR_ALPHA) / np.tan(EQUIANGULAR_ALPHA)
+    t = np.tan(t * EQUIANGULAR_ALPHA) / np.tan(EQUIANGULAR_ALPHA)
     ones = np.ones_like(s)
 
     for face in range(6):

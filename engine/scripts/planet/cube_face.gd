@@ -21,6 +21,10 @@ extends StaticBody3D
 #   formula here would invert the terrain and sink it below the sphere.
 
 const CHUNK_SIZE := 16
+
+# Equiangular (tangent) cube-sphere pre-distortion strength. MUST match
+# cube_sphere.py EQUIANGULAR_ALPHA (π/4 = full equiangular; →0 = plain linear).
+const EQUIANGULAR_ALPHA := PI / 4.0
 var planet_radius: float = 256.0  # set by VoxelPlanet before add_child; read from planet_config.json
 
 
@@ -100,7 +104,7 @@ func _build_face() -> void:
 #   unloaded neighbour     → solid (don't open into the unknown)
 func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, depth: int) -> bool:
 	if depth < 0:
-		return true
+		return false
 	if depth >= CHUNK_SIZE:
 		return false
 	if lc >= 0 and lc < CHUNK_SIZE and lr >= 0 and lr < CHUNK_SIZE:
@@ -248,12 +252,9 @@ func _add_chunk_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int, cy: 
 				if not _is_solid_at(cx, cy, data, lc, lr, depth + 1):
 					_emit_radial_face(st, u0, v0, u1, v1, r_out, color, true)
 
-				# Inward (bottom) face — exposed if the voxel just inward is open
-				# (an excavated pocket). depth 0's inward neighbour is the inner
-				# shell, treated as solid, so flat ground emits no buried floor.
-				if not _is_solid_at(cx, cy, data, lc, lr, depth - 1):
-					var under := Color(color.r * 0.5, color.g * 0.5, color.b * 0.5, color.a)
-					_emit_radial_face(st, u0, v0, u1, v1, r_in, under, false)
+				# Inward (bottom) face — always emit so the crust looks solid from inside.
+				var under := Color(color.r * 0.5, color.g * 0.5, color.b * 0.5, color.a)
+				_emit_radial_face(st, u0, v0, u1, v1, r_in, under, false)
 
 				# Four lateral faces — exposed where the side neighbour is open.
 				for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
@@ -473,6 +474,9 @@ func remove_top_voxel(col: int, row: int) -> bool:
 static func face_uv_to_unit(face: int, u: float, v: float) -> Vector3:
 	var s := u * 2.0 - 1.0
 	var t := v * 2.0 - 1.0
+	# Equiangular pre-distortion — must match cube_sphere.py face_uv_to_xyz.
+	s = tan(s * EQUIANGULAR_ALPHA) / tan(EQUIANGULAR_ALPHA)
+	t = tan(t * EQUIANGULAR_ALPHA) / tan(EQUIANGULAR_ALPHA)
 	var raw: Vector3
 	match face:
 		0: raw = Vector3( 1.0,  s,    t)
@@ -524,6 +528,9 @@ static func unit_to_face_col_row(unit: Vector3, resolution: int) -> Array:
 			face = 5
 			s = -r.x / r.z
 			t =  r.y / r.z
+	# Invert equiangular pre-distortion — must match cube_sphere.py xyz_to_face_uv.
+	s = atan(s * tan(EQUIANGULAR_ALPHA)) / EQUIANGULAR_ALPHA
+	t = atan(t * tan(EQUIANGULAR_ALPHA)) / EQUIANGULAR_ALPHA
 	var res_f: float = float(resolution)
 	var col: int = int(clamp((s + 1.0) * 0.5 * res_f, 0.0, res_f - 1.0))
 	var row: int = int(clamp((t + 1.0) * 0.5 * res_f, 0.0, res_f - 1.0))
