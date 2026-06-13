@@ -23,6 +23,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from cube_sphere import EQUIANGULAR_ALPHA
 from landmask import MIRRORED_FACES
 
 MAX_ELEV_M = 8849      # Everest summit (meters)
@@ -133,6 +134,9 @@ def build_elevation(nc_path: Path, resolution: int) -> tuple:
 
     s = u_flat * 2.0 - 1.0
     t = v_flat * 2.0 - 1.0
+    # Equiangular pre-distortion — must match cube_sphere.face_uv_to_xyz.
+    s = np.tan(s * EQUIANGULAR_ALPHA) / np.tan(EQUIANGULAR_ALPHA)
+    t = np.tan(t * EQUIANGULAR_ALPHA) / np.tan(EQUIANGULAR_ALPHA)
     ones = np.ones_like(s)
 
     for face in range(6):

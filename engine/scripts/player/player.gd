@@ -28,6 +28,7 @@ var _surface_right := Vector3(0, 0, 1)  # parallel-transported; avoids pole sing
 
 var _gravity_field: Node = null   # PlanetGenerator (in group "gravity_field"), looked up lazily
 var _water_overlay: ColorRect = null
+var _crosshair: Label = null
 
 
 func _ready() -> void:
@@ -52,6 +53,19 @@ func _ready() -> void:
 	_water_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_water_overlay.visible = false
 	cl.add_child(_water_overlay)
+
+	var hud_cl := CanvasLayer.new()
+	hud_cl.layer = 11
+	add_child(hud_cl)
+	_crosshair = Label.new()
+	_crosshair.text = "+"
+	_crosshair.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_crosshair.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_crosshair.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_crosshair.add_theme_font_size_override("font_size", 24)
+	_crosshair.visible = true
+	hud_cl.add_child(_crosshair)
 
 
 func _physics_process(delta: float) -> void:
@@ -164,7 +178,10 @@ func _physics_process(delta: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+			_break_voxel_aimed()
+		else:
+			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 	if event is InputEventKey and event.keycode == KEY_ESCAPE and event.pressed:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
@@ -191,6 +208,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.keycode == KEY_O and event.pressed and not event.echo:
 		_toggle_water()
 
+	if event is InputEventKey and event.keycode == KEY_H and event.pressed and not event.echo:
+		if _crosshair:
+			_crosshair.visible = not _crosshair.visible
+
 
 var _water_visible := true
 
@@ -202,6 +223,54 @@ func _toggle_water() -> void:
 		var cf = planet.get_node_or_null("CubeFace_%d" % face)
 		if cf and cf.has_method("set_water_visible"):
 			cf.set_water_visible(_water_visible)
+
+
+const DIG_REACH := 10.0
+
+# Raycast from the camera and remove the voxel the player is aiming at.
+# Works on both the outer shell and inner shell at any depth.
+func _break_voxel_aimed() -> void:
+	if not planet:
+		return
+	var space   := get_world_3d().direct_space_state
+	var cam_pos := camera.global_position
+	var cam_fwd := -camera.global_basis.z
+	var query   := PhysicsRayQueryParameters3D.create(cam_pos, cam_pos + cam_fwd * DIG_REACH)
+	query.exclude = [get_rid()]
+	var hit := space.intersect_ray(query)
+	if hit.is_empty():
+		return
+
+	# Step 0.5 units into the hit block along the inward normal so the radius
+	# sample lands clearly inside the voxel rather than on its face boundary.
+	var inside: Vector3 = hit.position - hit.normal * 0.5
+	var rel:    Vector3 = inside - planet.global_position
+	var r:      float   = rel.length()
+	var unit:   Vector3 = rel.normalized()
+
+	var fr: Array = _CubeFaceScript.unit_to_face_col_row(unit, planet.resolution)
+	var face    := int(fr[0])
+	var col     := int(fr[1])
+	var row     := int(fr[2])
+
+	var planet_r := _planet_radius()
+	var vox      := planet_r / float(planet.resolution)
+
+	if r >= planet_r - vox:
+		# Outer shell — outward convention: voxel d occupies the radial band
+		# [planet_r + (d-1)*vox, planet_r + d*vox]. The inverse is
+		# floor((r - planet_r)/vox) + 1 — NOT round(), which was one level too
+		# low and removed the buried depth-0 voxel instead of the surface voxel.
+		var depth: int = clamp(int(floor((r - planet_r) / vox)) + 1, 0, 15)
+		var cf := planet.get_node_or_null("CubeFace_%d" % face)
+		if cf:
+			cf.remove_voxel(col, row, depth)
+	else:
+		# Inner shell — inward convention: r_out(d) = planet_r - (d+1)*vox
+		var depth: int = clamp(int(floor((planet_r - r) / vox)) - 1, 0, 15)
+		var icf := planet.get_node_or_null("InnerCubeFace_%d" % face)
+		if icf:
+			icf.remove_voxel(col, row, depth)
 
 
 # Remove the topmost voxel of the column the player is standing on.
