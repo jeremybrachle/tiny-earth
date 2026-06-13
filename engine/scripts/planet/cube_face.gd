@@ -118,10 +118,13 @@ func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, dep
 			return true
 		var nm := ChunkLoader.voxel(_chunk_data[nkey], col % CHUNK_SIZE, row % CHUNK_SIZE, depth)
 		return nm != 0 and nm != 2
-	# Cross-face: project the out-of-bounds UV onto the sphere and re-project
+	# Cross-face: project the out-of-bounds cell onto the sphere and re-project
 	# to find which neighbour face owns this voxel and what its local coords are.
-	var u    := float(col) / float(_face_res)
-	var v    := float(row) / float(_face_res)
+	# Sample the cell CENTRE ((col+0.5)/res), not its corner: an edge cell's corner
+	# lands exactly on the seam line, where unit_to_face_col_row is ambiguous and
+	# can resolve to the wrong neighbour face — culling side faces that should show.
+	var u    := (float(col) + 0.5) / float(_face_res)
+	var v    := (float(row) + 0.5) / float(_face_res)
 	var unit := face_uv_to_unit(face_id, u, v)
 	var r    := unit_to_face_col_row(unit, _face_res)
 	var nface := int(r[0])
