@@ -296,6 +296,22 @@ func _build_chunk_collision(cx: int, cy: int) -> void:
 	_chunk_col_shapes[key] = col_shape
 
 
+# Raw material byte of the voxel at (col, row, depth); 0 for air, out-of-range,
+# or an unloaded chunk. Used for point-in-voxel queries (e.g. the underwater
+# overlay) so callers can ask "what material is at this exact 3D point?".
+func mat_at(col: int, row: int, depth: int) -> int:
+	if col < 0 or col >= _face_res or row < 0 or row >= _face_res:
+		return 0
+	if depth < 0 or depth >= CHUNK_SIZE:
+		return 0
+	var cx  := col / CHUNK_SIZE
+	var cy  := row / CHUNK_SIZE
+	var key := cx * chunks_per_edge + cy
+	if not _chunk_data.has(key):
+		return 0
+	return ChunkLoader.voxel(_chunk_data[key], col % CHUNK_SIZE, row % CHUNK_SIZE, depth)
+
+
 # Remove a specific voxel by column + depth. Opens the column if it becomes
 # fully empty (chains to open_column so the cavity passage is created).
 func remove_voxel(col: int, row: int, depth: int) -> bool:

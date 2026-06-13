@@ -20,6 +20,7 @@ const _CubeFaceScript = preload("res://scripts/planet/cube_face.gd")
 
 var _first_person := false
 var _flying       := false
+var _noclip       := false   # fly-through-solid toggle (KEY_N); off by default
 var _swimming     := false
 var _swim_bob     := 0.0   # oscillator for camera bob while swimming
 var _yaw:   float = 0.0
@@ -32,6 +33,10 @@ var _crosshair: Label = null
 
 
 func _ready() -> void:
+	# Tight near plane so the camera frustum doesn't poke through a nearby solid
+	# face (cave ceiling / inner-shell roof) and reveal the culled hollow behind
+	# it. Same trick Minecraft/Luanti use for low-clearance spaces.
+	camera.near = 0.01
 	if not planet:
 		planet = get_node_or_null("../VoxelPlanet") as StaticBody3D
 	if planet:
@@ -104,17 +109,28 @@ func _physics_process(delta: float) -> void:
 	var planet_r := _planet_radius()
 	var near_surface := global_position.length() > planet_r * 0.9
 	_swimming = (not _flying) and near_surface and _surface_mat_at(global_position) == 2
+	# Underwater tint shows only when the camera is INSIDE an actual water voxel,
+	# not merely somewhere below an ocean column. The old radius-gated heuristic
+	# false-fired when flying through inner-shell rock under ocean tiles.
 	if _water_overlay:
-		var cam_dist := camera.global_position.length()
-		_water_overlay.visible = cam_dist < planet_r and cam_dist > planet_r * 0.9 \
-			and _surface_mat_at(global_position) == 2
+		_water_overlay.visible = _voxel_mat_at(camera.global_position) == 2
 
 	if _flying:
 		var fly_dir := cam_fwd * -input.y + cam_right * input.x
 		fly_dir += surface_normal * float(Input.is_action_pressed("ui_accept"))   # Space = up
 		fly_dir -= surface_normal * float(Input.is_key_pressed(KEY_CTRL))         # Ctrl  = down
 		if fly_dir.length() > 0.01:
-			global_position += fly_dir.normalized() * FLY_SPEED * delta
+			# Collision-aware fly (Issue 3): move_and_collide stops the player at solid
+			# crust instead of noclipping through it. The apparent "hollow voxels" were
+			# never a data/mesh bug — they are the inner shell's correctly face-culled
+			# solid interior, only ever visible by flying inside undug rock. Air, dug
+			# shafts, and the open hollow cavity have no collider, so they stay flyable.
+			# KEY_N toggles _noclip back on for free hollow-space exploration.
+			var motion := fly_dir.normalized() * FLY_SPEED * delta
+			if _noclip:
+				global_position += motion
+			else:
+				move_and_collide(motion)
 		velocity = Vector3.ZERO
 		_swim_bob = 0.0
 	elif _swimming:
@@ -173,7 +189,22 @@ func _physics_process(delta: float) -> void:
 		var vert   := Basis(Vector3.RIGHT, pitch_rad)
 		var offset := horiz * (vert * Vector3(0.0, TP_HEIGHT, TP_DISTANCE))
 		camera.transform = Transform3D(Basis.IDENTITY, offset + bob_offset)
-		camera.look_at(global_position + global_basis.y * 1.0, global_basis.y)
+		# Camera collision ("spring arm"): if solid sits between the player's head
+		# and the desired 3rd-person camera spot, pull the camera in to the hit
+		# point so it doesn't clip through walls/ceilings into culled-solid space.
+		# The rock IS solid (same as Minecraft/Luanti) — we just slide the camera
+		# inward rather than letting it show the hollow. Skipped under _noclip so
+		# free hollow-space exploration isn't fought by the camera.
+		var head := global_position + global_basis.y * 1.0
+		if not _noclip:
+			var desired := camera.global_position
+			var space := get_world_3d().direct_space_state
+			var q := PhysicsRayQueryParameters3D.create(head, desired)
+			q.exclude = [get_rid()]
+			var chit := space.intersect_ray(q)
+			if not chit.is_empty():
+				camera.global_position = chit.position + (head - desired).normalized() * 0.2
+		camera.look_at(head, global_basis.y)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -201,6 +232,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		_flying = not _flying
 		if not _flying:
 			velocity = Vector3.ZERO  # prevent velocity carry-over when landing
+
+	if event is InputEventKey and event.keycode == KEY_N and event.pressed and not event.echo:
+		_noclip = not _noclip
 
 	if event is InputEventKey and event.keycode == KEY_E and event.pressed and not event.echo:
 		_break_voxel_underfoot()
@@ -289,6 +323,33 @@ func _break_voxel_underfoot() -> void:
 	var inner_face := planet.get_node_or_null("InnerCubeFace_%d" % face_idx)
 	if inner_face:
 		inner_face.remove_top_voxel(col, row)
+
+
+# Material of the voxel that physically contains a world-space point (0 = none).
+# Resolves shell + depth from radius the same way _break_voxel_aimed does, then
+# reads the raw chunk byte via mat_at(). Unlike _surface_mat_at (which returns a
+# column's top material), this answers "what voxel am I literally standing in?",
+# so the underwater overlay only fires inside real water voxels.
+func _voxel_mat_at(pos: Vector3) -> int:
+	if not planet:
+		return 0
+	var rel := pos - planet.global_position
+	var r := rel.length()
+	var planet_r := _planet_radius()
+	var vox := planet_r / float(planet.resolution)
+	var fr: Array = _CubeFaceScript.unit_to_face_col_row(rel.normalized(), planet.resolution)
+	var face := int(fr[0]); var col := int(fr[1]); var row := int(fr[2])
+	if r >= planet_r - vox:
+		var depth: int = int(floor((r - planet_r) / vox)) + 1
+		var cf = planet.get_node_or_null("CubeFace_%d" % face)
+		if cf and cf.has_method("mat_at"):
+			return cf.mat_at(col, row, depth)
+	else:
+		var depth: int = int(floor((planet_r - r) / vox)) - 1
+		var icf = planet.get_node_or_null("InnerCubeFace_%d" % face)
+		if icf and icf.has_method("mat_at"):
+			return icf.mat_at(col, row, depth)
+	return 0
 
 
 func _surface_mat_at(pos: Vector3) -> int:

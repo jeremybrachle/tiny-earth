@@ -54,7 +54,7 @@ static func from_face_col_row(
 	var local_u := col % chunk_size
 	var local_v := row % chunk_size
 	var local_r := depth
-	return VoxelAddr(p_face, p_shell, chunk_u, chunk_v, local_u, local_v, local_r)
+	return VoxelAddr.new(p_face, p_shell, chunk_u, chunk_v, local_u, local_v, local_r)
 
 func to_col_row_depth(chunk_size: int) -> Vector3i:
 	var col := chunk_u * chunk_size + local_u
