@@ -3,12 +3,40 @@ extends Node3D
 @onready var _world_env : WorldEnvironment = $WorldEnvironment
 @onready var _sun       : DirectionalLight3D = $DirectionalLight3D
 
+# Day/night cycle. The sun is a DirectionalLight3D; rotating it sweeps the light
+# direction across the planet. Press T to cycle the time scale (pause → 1× → 10×
+# → 60×) — useful for checking whether a shading seam moves with the sun (a
+# faceted-normal lighting discontinuity) or stays fixed (a UV/texture artifact).
+const _DAY_LENGTH_SEC := 120.0          # real seconds per full revolution at 1×
+const _TIME_SCALES := [0.0, 1.0, 10.0, 60.0]
+var _time_scale_idx := 1
+var _sun_angle := 0.0
+
 func _ready() -> void:
     Engine.max_fps = 60
     _setup_sky()
     _setup_environment()
     _setup_sun()
     _setup_planet_generator()
+
+
+func _process(delta: float) -> void:
+    var scale: float = _TIME_SCALES[_time_scale_idx]
+    if scale == 0.0:
+        return
+    _sun_angle += TAU / _DAY_LENGTH_SEC * scale * delta
+    # The sun orbits in the equatorial (X-Z) plane about the polar (+Y) axis, so
+    # an equatorial observer sees it rise on one horizon, pass directly overhead,
+    # and set on the other — east-rise / west-set, no permanent high elevation.
+    # (Negate _sun_angle if east/west ends up reversed for your map orientation.)
+    var sun_dir := Vector3(cos(_sun_angle), 0.0, sin(_sun_angle))
+    _sun.look_at_from_position(Vector3.ZERO, -sun_dir, Vector3.UP)
+
+
+func _unhandled_input(event: InputEvent) -> void:
+    if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_T:
+        _time_scale_idx = (_time_scale_idx + 1) % _TIME_SCALES.size()
+        print("Day/night time scale: %.0f×" % _TIME_SCALES[_time_scale_idx])
 
 
 func _setup_sky() -> void:

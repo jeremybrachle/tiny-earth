@@ -124,14 +124,17 @@ func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, dep
 		var nm := ChunkLoader.voxel(_chunk_data[nkey], col % CHUNK_SIZE, row % CHUNK_SIZE, depth)
 		return nm != 0 and nm != 2
 	# Cross-face lookup via sphere re-projection (same pattern as CubeFace).
-	var u    := float(col) / float(_face_res)
-	var v    := float(row) / float(_face_res)
+	# Culling the seam face when the neighbour is solid keeps flat seams clean;
+	# emitting it when the neighbour is air fixes see-through holes. The `return
+	# true` fallbacks bias toward the clean culled look when the neighbour can't
+	# be resolved. Sample the cell CENTRE (+0.5), not the ambiguous corner.
+	var u    := (float(col) + 0.5) / float(_face_res)
+	var v    := (float(row) + 0.5) / float(_face_res)
 	var unit := _CubeFaceScript.face_uv_to_unit(face_id, u, v)
 	var r    := _CubeFaceScript.unit_to_face_col_row(unit, _face_res)
 	var nface := int(r[0])
 	if nface == face_id:
-		# Degenerate: boundary pixel projected back to same face.
-		# Nudge u/v inward by half a texel and retry once.
+		# Degenerate: boundary pixel projected back to same face. Nudge inward.
 		var eps: float = 0.5 / float(_face_res)
 		var u2: float = clamp(u, eps, 1.0 - eps)
 		var v2: float = clamp(v, eps, 1.0 - eps)
@@ -139,7 +142,7 @@ func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, dep
 		r = _CubeFaceScript.unit_to_face_col_row(unit, _face_res)
 		nface = int(r[0])
 		if nface == face_id:
-			return true  # still degenerate after nudge — treat as solid
+			return true  # cube corner — treat as solid (clean culled seam)
 	var nb := get_parent().get_node_or_null("InnerCubeFace_%d" % nface) as InnerCubeFace
 	if nb == null or not is_instance_valid(nb):
 		return true
@@ -302,21 +305,23 @@ func _add_water_to_surface(st_w: SurfaceTool, data: PackedByteArray, cx: int, cy
 				var r_out := planet_radius - (float(depth) + 1.0) * voxel_size
 				var r_in  := planet_radius - (float(depth) + 2.0) * voxel_size
 
-				# Top face intentionally omitted: the outer shell's sea-surface quad
-				# already covers the above-water view. Emitting a second face here
-				# stacks two alpha-0.55 layers → ~80% opacity (looks wrong from above).
-				# Inner shell top faces are only needed for Session 2 (dug shafts that
-				# break through into the ocean from below).
+				# Top face: only when the voxel immediately outward (depth-1) is air.
+				# depth > 0 guard prevents stacking with the outer shell's sea surface.
+				# This makes the water surface visible when looking down into a dug
+				# shaft that has been flooded from the side.
+				if depth > 0 and mat_at(col0, row0, depth - 1) == 0:
+					_emit_radial_face(st_w, u0, v0, u1, v1, r_out, color, true)
 
-				# Side faces — only toward in-chunk air (mat 0).
-				# Water→water sides are skipped to avoid grid lines at column boundaries.
+				# Side faces — toward air only. Suppress at face-boundary edges
+				# (nc/nr out of [0, _face_res)) to avoid mirrored double-walls at
+				# cube-face seams; the adjacent face renders its own water correctly.
 				for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-					var nc: int = lc + dir.x
-					var nr: int = lr + dir.y
-					if nc >= 0 and nc < CHUNK_SIZE and nr >= 0 and nr < CHUNK_SIZE:
-						if ChunkLoader.voxel(data, nc, nr, depth) == 0:
-							_emit_side_face(st_w, col0, row0, dir, r_in, r_out, res, eps, color)
-					# Cross-chunk side faces deferred to Session 2.
+					var nc: int = col0 + dir.x
+					var nr: int = row0 + dir.y
+					if nc < 0 or nc >= _face_res or nr < 0 or nr >= _face_res:
+						continue
+					if mat_at(nc, nr, depth) == 0:
+						_emit_side_face(st_w, col0, row0, dir, r_in, r_out, res, eps, color)
 
 
 func _build_chunk_collision_mesh(cx: int, cy: int) -> ArrayMesh:
@@ -364,6 +369,65 @@ func mat_at(col: int, row: int, depth: int) -> int:
 	return ChunkLoader.voxel(_chunk_data[key], col % CHUNK_SIZE, row % CHUNK_SIZE, depth)
 
 
+# If any of the 6 face-neighbors of (col, row, depth) is water (mat-2),
+# write mat-2 into that voxel and return true. Called right after zeroing a
+# dug voxel so the hole immediately fills when adjacent to the ocean.
+# BFS flood fill starting from (start_col, start_row, start_depth), which was
+# just zeroed. Every connected air voxel that touches a water (mat-2) neighbor
+# gets filled with water — same semantics as Minecraft/Luanti source blocks.
+# Returns a Dictionary of chunk key → [cx, cy] for every chunk that was written.
+func _flood_fill_water_from(start_col: int, start_row: int, start_depth: int) -> Dictionary:
+	print("_flood_fill_water_from called at (%d,%d,%d)" % [start_col, start_row, start_depth])
+	const MAX_FILL := 512  # voxel cap to keep single-dig cost bounded
+	var queue := [[start_col, start_row, start_depth]]
+	var seen  := {}
+	# Track voxels filled by THIS BFS run so has_water can see them immediately,
+	# bypassing any PackedByteArray COW lag on _chunk_data dictionary reads.
+	var filled := {}  # gk → true for voxels filled with water this run
+	var dirty := {}   # chunk key → [cx, cy]
+	var count := 0
+
+	while queue.size() > 0 and count < MAX_FILL:
+		var v: Array = queue.pop_front()
+		var c: int = v[0];  var r: int = v[1];  var d: int = v[2]
+		if d < 0 or d >= CHUNK_SIZE: continue
+		if c < 0 or c >= _face_res or r < 0 or r >= _face_res: continue
+		var gk: int = (c * _face_res + r) * CHUNK_SIZE + d
+		if seen.has(gk): continue
+		seen[gk] = true
+		if mat_at(c, r, d) != 0: continue  # not air — skip
+
+		# A neighbor counts as water if it holds mat-2 in chunk data OR was
+		# filled with water earlier in this BFS run (the filled set avoids
+		# relying on _chunk_data read-back for voxels written this iteration).
+		var has_water: bool = \
+			mat_at(c + 1, r,     d    ) == 2 or filled.has(((c+1) * _face_res + r)     * CHUNK_SIZE + d) or \
+			mat_at(c - 1, r,     d    ) == 2 or filled.has(((c-1) * _face_res + r)     * CHUNK_SIZE + d) or \
+			mat_at(c,     r + 1, d    ) == 2 or filled.has((c * _face_res + (r+1))     * CHUNK_SIZE + d) or \
+			mat_at(c,     r - 1, d    ) == 2 or filled.has((c * _face_res + (r-1))     * CHUNK_SIZE + d) or \
+			mat_at(c,     r,     d - 1) == 2 or filled.has((c * _face_res + r) * CHUNK_SIZE + (d-1))     or \
+			mat_at(c,     r,     d + 1) == 2 or filled.has((c * _face_res + r) * CHUNK_SIZE + (d+1))
+		if not has_water: continue
+
+		var cx: int = c / CHUNK_SIZE;  var cy: int = r / CHUNK_SIZE
+		var lc: int = c % CHUNK_SIZE;  var lr: int = r % CHUNK_SIZE
+		var key: int = cx * chunks_per_edge + cy
+		if not _chunk_data.has(key): continue
+		var data: PackedByteArray = _chunk_data[key]
+		data[lc + CHUNK_SIZE * (lr + CHUNK_SIZE * d)] = 2
+		_chunk_data[key] = data
+		filled[gk] = true
+		dirty[key] = [cx, cy]
+		count += 1
+
+		queue.push_back([c + 1, r, d]);  queue.push_back([c - 1, r, d])
+		queue.push_back([c, r + 1, d]);  queue.push_back([c, r - 1, d])
+		queue.push_back([c, r, d - 1]);  queue.push_back([c, r, d + 1])
+
+	print("_flood_fill_water_from done, filled %d voxels" % count)
+	return dirty
+
+
 # Remove a specific voxel by column + depth. Opens the column if it becomes
 # fully empty (chains to open_column so the cavity passage is created).
 func remove_voxel(col: int, row: int, depth: int) -> bool:
@@ -379,6 +443,8 @@ func remove_voxel(col: int, row: int, depth: int) -> bool:
 		return false
 	data[lc + CHUNK_SIZE * (lr + CHUNK_SIZE * depth)] = 0
 	_chunk_data[key] = data
+	var dirty := _flood_fill_water_from(col, row, depth)
+	data = _chunk_data[key]
 	# Check if column is now fully empty — if so, open the cavity passage.
 	var has_solid := false
 	for d in CHUNK_SIZE:
@@ -390,16 +456,22 @@ func remove_voxel(col: int, row: int, depth: int) -> bool:
 		open_column(col, row)
 		return true
 	_build_chunk_collision.call_deferred(cx, cy)
-	_rebuild_chunk(cx, cy, key)
+	var rebuilt := {}
+	_rebuild_chunk(cx, cy, key);  rebuilt[key] = true
 	for nb in [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]:
 		var nx: int = nb[0];  var ny: int = nb[1]
 		if nx < 0 or nx >= chunks_per_edge or ny < 0 or ny >= chunks_per_edge:
 			continue
-		if nx == cx and ny == cy:
-			continue
 		var nkey := nx * chunks_per_edge + ny
-		if _chunk_data.has(nkey):
+		if _chunk_data.has(nkey) and not rebuilt.has(nkey):
+			rebuilt[nkey] = true
 			_rebuild_chunk(nx, ny, nkey)
+	for entry in dirty.values():
+		var dx: int = (entry as Array)[0];  var dy: int = (entry as Array)[1]
+		var dkey: int = dx * chunks_per_edge + dy
+		if not rebuilt.has(dkey) and _chunk_data.has(dkey):
+			rebuilt[dkey] = true
+			_rebuild_chunk(dx, dy, dkey)
 	return true
 
 
@@ -450,6 +522,8 @@ func remove_top_voxel(col: int, row: int) -> bool:
 	var idx := lc + CHUNK_SIZE * (lr + CHUNK_SIZE * floor_d)
 	data[idx] = 0  # erase the floor voxel (expose rock below)
 	_chunk_data[key] = data
+	var dirty := _flood_fill_water_from(col, row, floor_d)
+	data = _chunk_data[key]
 
 	# Update grid: new floor is the next non-water solid below.
 	var new_floor := floor_d
@@ -470,17 +544,22 @@ func remove_top_voxel(col: int, row: int) -> bool:
 	_top_mat_grid[gi]   = new_mat
 
 	_build_chunk_collision.call_deferred(cx, cy)
-	_rebuild_chunk(cx, cy, key)
+	var rebuilt := {}
+	_rebuild_chunk(cx, cy, key);  rebuilt[key] = true
 	for nb in [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]:
-		var nx: int = nb[0]
-		var ny: int = nb[1]
+		var nx: int = nb[0];  var ny: int = nb[1]
 		if nx < 0 or nx >= chunks_per_edge or ny < 0 or ny >= chunks_per_edge:
 			continue
-		if nx == cx and ny == cy:
-			continue
 		var nkey := nx * chunks_per_edge + ny
-		if _chunk_data.has(nkey):
+		if _chunk_data.has(nkey) and not rebuilt.has(nkey):
+			rebuilt[nkey] = true
 			_rebuild_chunk(nx, ny, nkey)
+	for entry in dirty.values():
+		var dx: int = (entry as Array)[0];  var dy: int = (entry as Array)[1]
+		var dkey: int = dx * chunks_per_edge + dy
+		if not rebuilt.has(dkey) and _chunk_data.has(dkey):
+			rebuilt[dkey] = true
+			_rebuild_chunk(dx, dy, dkey)
 	return true
 
 

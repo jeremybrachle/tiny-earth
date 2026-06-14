@@ -118,19 +118,23 @@ func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, dep
 			return true
 		var nm := ChunkLoader.voxel(_chunk_data[nkey], col % CHUNK_SIZE, row % CHUNK_SIZE, depth)
 		return nm != 0 and nm != 2
-	# Cross-face: project the out-of-bounds cell onto the sphere and re-project
-	# to find which neighbour face owns this voxel and what its local coords are.
-	# Sample the cell CENTRE ((col+0.5)/res), not its corner: an edge cell's corner
-	# lands exactly on the seam line, where unit_to_face_col_row is ambiguous and
-	# can resolve to the wrong neighbour face — culling side faces that should show.
+	# Cross-face: project the out-of-bounds cell onto the sphere and re-project to
+	# find which neighbour face owns this voxel and its local coords. Culling a
+	# seam face when the neighbour is solid keeps flat seams clean (no standing
+	# wall, no shadow line); emitting it when the neighbour is air fixes genuine
+	# see-through holes at coastlines/cliffs that straddle a seam. For the common
+	# solid-to-solid case the lookup is robust: even a slightly-off re-projection
+	# still lands on solid terrain and correctly culls. The `return true` (solid)
+	# fallbacks below therefore bias toward the clean culled look when the
+	# neighbour can't be resolved. Sample the cell CENTRE (+0.5), not the corner,
+	# which lands on the ambiguous seam line.
 	var u    := (float(col) + 0.5) / float(_face_res)
 	var v    := (float(row) + 0.5) / float(_face_res)
 	var unit := face_uv_to_unit(face_id, u, v)
 	var r    := unit_to_face_col_row(unit, _face_res)
 	var nface := int(r[0])
 	if nface == face_id:
-		# Degenerate: boundary pixel projected back to same face.
-		# Nudge u/v inward by half a texel and retry once.
+		# Degenerate: boundary pixel projected back to same face. Nudge inward.
 		var eps: float = 0.5 / float(_face_res)
 		var u2: float = clamp(u, eps, 1.0 - eps)
 		var v2: float = clamp(v, eps, 1.0 - eps)
@@ -138,7 +142,7 @@ func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, dep
 		r = unit_to_face_col_row(unit, _face_res)
 		nface = int(r[0])
 		if nface == face_id:
-			return true  # still degenerate after nudge — treat as solid
+			return true  # cube corner — treat as solid (clean culled seam)
 	var nb := get_parent().get_node_or_null("CubeFace_%d" % nface) as CubeFace
 	if nb == null or not is_instance_valid(nb):
 		return true
@@ -428,7 +432,8 @@ func remove_voxel(col: int, row: int, depth: int) -> bool:
 	if not _chunk_data.has(key):
 		return false
 	var data: PackedByteArray = _chunk_data[key]
-	if ChunkLoader.voxel(data, lc, lr, depth) == 0:
+	var m := ChunkLoader.voxel(data, lc, lr, depth)
+	if m == 0 or m == 2:
 		return false
 	data[lc + CHUNK_SIZE * (lr + CHUNK_SIZE * depth)] = 0
 	_chunk_data[key] = data
@@ -459,10 +464,13 @@ func remove_top_voxel(col: int, row: int) -> bool:
 		return false
 	var data: PackedByteArray = _chunk_data[key]
 
-	# Scan inward from the top for the first (outermost) solid voxel.
+	# Scan inward from the top for the first (outermost) solid non-water voxel.
+	# Water (mat-2) is skipped so the sea surface is never mined directly;
+	# ocean columns fall through to the inner shell for digging.
 	var top := -1
 	for depth in range(CHUNK_SIZE - 1, -1, -1):
-		if ChunkLoader.voxel(data, lc, lr, depth) != 0:
+		var m := ChunkLoader.voxel(data, lc, lr, depth)
+		if m != 0 and m != 2:
 			top = depth
 			break
 	if top < 0:
