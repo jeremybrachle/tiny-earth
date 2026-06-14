@@ -212,7 +212,11 @@ is faster to implement; option (a) is more flexible.
 | 7.7 | Visual upgrade: space sky + stars + sun disc; PBR voxel shader; SSAO; ACES tonemapping; centralized planet scale via `planet_config.json`; altitude-aware atmosphere (day/night sky, dusk/dawn); resolution bump 256→512 | 5.9 | ✅ |
 | 7.8 | Inner shell + seafloor geometry (visual); ocean water mesh; swimming detection | 6.0 | ✅ |
 | 7.9 | Per-chunk collision replaces SphereShape3D; inner shell gets physics; shoreline gap closed; player can fall through excavated terrain and land on seafloor | 6.2 | ✅ |
-| 7.95 | Buoyancy physics (upward force in water, Ctrl to dive); underwater fog camera effect; hollow centre room + OmniLight3D | 6.3 | — |
+| 7.95 | Volumetric water column: inner shell mat-2 voxels now emit translucent quads (`_add_water_to_surface` in `inner_cube_face.gd`); hollow gap resolved | 6.3 | ✅ |
+| 7.95b | Water spreading on dig: removing a voxel adjacent to mat-2 fills the gap with water (Minecraft source-block semantics) | 6.3 | — |
+| 7.95c | Planet drain + refill: debug keypress drains all water, refill re-floods from original ocean positions | 6.3 | — |
+| 7.95d | Flowing water animation: TIME-driven UV scroll in water.gdshader | 6.3 | — |
+| 7.95e | Buoyancy physics (upward force in water, Ctrl to dive); underwater fog camera effect; hollow centre room + OmniLight3D | 6.3 | — |
 | 7.96 | All-planet lake water (1,355 NE10m lakes via `--lakes`); inner cavity biome ceiling art (depth-15 biome + ocean colour); inner sphere Earth map texture (`render_map.py`; `SHADING_MODE_UNSHADED`; `rotation_degrees = Vector3(0, 270, 0)`); unshaded inner shell shader (`inner_voxel.gdshader`) | 6.3 | ✅ |
 | 7.97 | Architecture revamp: outer shell rewritten to per-voxel TYPE B mesher; cross-face neighbor stitching via sphere re-projection (no adjacency table); aim-based left-click digging (raycast → shell/depth dispatch). Visually verified. Open: crosshair HUD, invisible sides at face seams. | 6.4 | ✅ |
 | 7.98 | Equiangular cube-sphere distortion fix: `tan(s·α)/tan(α)` remap at all 7 projection sites (cube_sphere.py ×2, landmask/biomes/elevation.py inline numpy ×3, cube_face.gd ×2); full cache rebuild with `--lakes`. Reduces face cell-area variation 5.16× → 1.41×. Nearly backed out (first attempt only updated 4 of 7 sites → continent warping) until the correct scope was identified. Seam invisible-face bug also fixed: cross-face `_is_solid_at` now samples cell centre not corner. | 6.4 | ✅ |

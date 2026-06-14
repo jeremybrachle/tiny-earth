@@ -30,7 +30,9 @@ const MAT_COLORS := {
 }
 
 var _mat: Material = null
+var _water_mat: Material = null
 var _chunk_insts := {}
+var _water_chunk_insts := {}
 
 var _chunk_data := {}
 var _face_res := 0
@@ -47,6 +49,8 @@ func _ready() -> void:
 func _build_face() -> void:
 	_mat = ShaderMaterial.new()
 	(_mat as ShaderMaterial).shader = load("res://shaders/inner_voxel.gdshader") as Shader
+	_water_mat = ShaderMaterial.new()
+	(_water_mat as ShaderMaterial).shader = load("res://shaders/water.gdshader") as Shader
 
 	_face_res = CHUNK_SIZE * chunks_per_edge
 	_top_depth_grid.resize(_face_res * _face_res)
@@ -267,6 +271,54 @@ func _add_chunk_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int, cy: 
 
 
 
+# Emits a single translucent outward face per ocean column (the topmost water
+# voxel only), plus side faces toward explicit air gaps from digging.
+#
+# One-face-per-column gives a continuous smooth ocean surface with no visible
+# grid lines at shallow/deep boundaries.  Stacking one face per depth layer
+# makes depth-transition edges visible through the translucent outer-shell
+# surface, creating a blocky grid appearance.
+#
+# Side faces use an explicit air (mat 0) check to skip water→water walls, which
+# would draw a grid line at every adjacent-column boundary.
+func _add_water_to_surface(st_w: SurfaceTool, data: PackedByteArray, cx: int, cy: int) -> void:
+	var res        := float(_face_res)
+	var voxel_size := planet_radius / res
+	var eps        := 0.5 / res
+	var color: Color = MAT_COLORS.get(2, Color(0.10, 0.35, 0.65))
+
+	for lc in CHUNK_SIZE:
+		for lr in CHUNK_SIZE:
+			var col0 := cx * CHUNK_SIZE + lc
+			var row0 := cy * CHUNK_SIZE + lr
+			var u0 := col0 / res
+			var u1 := (col0 + 1) / res
+			var v0 := row0 / res
+			var v1 := (row0 + 1) / res
+			for depth in CHUNK_SIZE:
+				var m := ChunkLoader.voxel(data, lc, lr, depth)
+				if m != 2:
+					continue
+				var r_out := planet_radius - (float(depth) + 1.0) * voxel_size
+				var r_in  := planet_radius - (float(depth) + 2.0) * voxel_size
+
+				# Top face intentionally omitted: the outer shell's sea-surface quad
+				# already covers the above-water view. Emitting a second face here
+				# stacks two alpha-0.55 layers → ~80% opacity (looks wrong from above).
+				# Inner shell top faces are only needed for Session 2 (dug shafts that
+				# break through into the ocean from below).
+
+				# Side faces — only toward in-chunk air (mat 0).
+				# Water→water sides are skipped to avoid grid lines at column boundaries.
+				for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+					var nc: int = lc + dir.x
+					var nr: int = lr + dir.y
+					if nc >= 0 and nc < CHUNK_SIZE and nr >= 0 and nr < CHUNK_SIZE:
+						if ChunkLoader.voxel(data, nc, nr, depth) == 0:
+							_emit_side_face(st_w, col0, row0, dir, r_in, r_out, res, eps, color)
+					# Cross-chunk side faces deferred to Session 2.
+
+
 func _build_chunk_collision_mesh(cx: int, cy: int) -> ArrayMesh:
 	# Collision uses the exact same voxel faces as the render mesh, so the solid
 	# you see is the solid you hit (create_trimesh_shape ignores the colour/uv).
@@ -435,7 +487,12 @@ func remove_top_voxel(col: int, row: int) -> bool:
 func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
 	var old: MeshInstance3D = _chunk_insts.get(key) as MeshInstance3D
 	if old != null and is_instance_valid(old):
+		old.visible = false
 		old.queue_free()
+	var old_water: MeshInstance3D = _water_chunk_insts.get(key) as MeshInstance3D
+	if old_water != null and is_instance_valid(old_water):
+		old_water.visible = false
+		old_water.queue_free()
 	if not _chunk_data.has(key):
 		return
 	var st := SurfaceTool.new()
@@ -447,3 +504,15 @@ func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
 	inst.material_override = _mat
 	add_child(inst)
 	_chunk_insts[key] = inst
+
+	var st_w := SurfaceTool.new()
+	st_w.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_add_water_to_surface(st_w, _chunk_data[key], cx, cy)
+	st_w.generate_normals()
+	var water_mesh := st_w.commit()
+	if water_mesh != null and water_mesh.get_surface_count() > 0:
+		var water_inst := MeshInstance3D.new()
+		water_inst.mesh = water_mesh
+		water_inst.material_override = _water_mat
+		add_child(water_inst)
+		_water_chunk_insts[key] = water_inst
