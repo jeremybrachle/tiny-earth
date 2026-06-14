@@ -92,7 +92,28 @@ func _build_face() -> void:
 		for cy in chunks_per_edge:
 			_build_chunk_collision(cx, cy)
 
+	# Deferred so it runs after every sibling face has finished _ready() (faces
+	# build sequentially): re-mesh the edge chunks now that cross-face neighbour
+	# data is loaded. Without this, faces built early cull seam walls toward
+	# not-yet-loaded faces, leaving invisible side walls until a nearby dig.
+	_rebuild_seam_edges.call_deferred()
+
 	print("CubeFace %d: done" % face_id)
+
+
+# Re-mesh the chunks along all four face edges (run once, deferred, at load).
+func _rebuild_seam_edges() -> void:
+	var last := chunks_per_edge - 1
+	var seen := {}
+	for i in chunks_per_edge:
+		for c in [[0, i], [last, i], [i, 0], [i, last]]:
+			var cx: int = c[0];  var cy: int = c[1]
+			var key: int = cx * chunks_per_edge + cy
+			if seen.has(key) or not _chunk_data.has(key):
+				continue
+			seen[key] = true
+			_rebuild_chunk(cx, cy, key)
+			_build_chunk_collision.call_deferred(cx, cy)
 
 
 # True voxel occupancy test, used for 6-way face culling. A face is emitted only
