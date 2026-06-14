@@ -422,6 +422,35 @@ func mat_at(col: int, row: int, depth: int) -> int:
 	return ChunkLoader.voxel(_chunk_data[key], col % CHUNK_SIZE, row % CHUNK_SIZE, depth)
 
 
+# After a dig at a face-edge cell, the ADJACENT cube face's seam voxels may now
+# border new air and need their walls re-meshed — otherwise digging at a seam
+# leaves see-through holes (the neighbour face still shows its old "both solid,
+# cull the wall" mesh). For each out-of-face neighbour cell, re-project to find
+# its owning face and rebuild that face's affected chunk + collision.
+func _rebuild_seam_neighbors(col: int, row: int) -> void:
+	for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var ncol: int = col + dir.x
+		var nrow: int = row + dir.y
+		if ncol >= 0 and ncol < _face_res and nrow >= 0 and nrow < _face_res:
+			continue  # same face — already covered by the in-face neighbour rebuild
+		var u := (float(ncol) + 0.5) / float(_face_res)
+		var v := (float(nrow) + 0.5) / float(_face_res)
+		var unit := face_uv_to_unit(face_id, u, v)
+		var r := unit_to_face_col_row(unit, _face_res)
+		var nface := int(r[0])
+		if nface == face_id:
+			continue
+		var nb := get_parent().get_node_or_null("CubeFace_%d" % nface) as CubeFace
+		if nb == null or not is_instance_valid(nb):
+			continue
+		var nc: int = int(r[1]);  var nr: int = int(r[2])
+		var ncx: int = nc / CHUNK_SIZE;  var ncy: int = nr / CHUNK_SIZE
+		var nkey: int = ncx * nb.chunks_per_edge + ncy
+		if nb._chunk_data.has(nkey):
+			nb._rebuild_chunk(ncx, ncy, nkey)
+			nb._build_chunk_collision.call_deferred(ncx, ncy)
+
+
 # Remove a specific voxel by column + depth. Used by aimed digging.
 func remove_voxel(col: int, row: int, depth: int) -> bool:
 	var cx  := col / CHUNK_SIZE
@@ -448,6 +477,7 @@ func remove_voxel(col: int, row: int, depth: int) -> bool:
 		var nkey := nx * chunks_per_edge + ny
 		if _chunk_data.has(nkey):
 			_rebuild_chunk(nx, ny, nkey)
+	_rebuild_seam_neighbors(col, row)
 	return true
 
 
@@ -495,6 +525,7 @@ func remove_top_voxel(col: int, row: int) -> bool:
 		var nkey := nx * chunks_per_edge + ny
 		if _chunk_data.has(nkey):
 			_rebuild_chunk(nx, ny, nkey)
+	_rebuild_seam_neighbors(col, row)
 	return true
 
 
