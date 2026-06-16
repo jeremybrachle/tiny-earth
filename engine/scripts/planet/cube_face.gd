@@ -54,6 +54,19 @@ var _water_chunk_insts := {} # int key → MeshInstance3D
 var _face_res       := 0
 var _chunk_col_shapes := {}   # int key → CollisionShape3D, one per chunk
 
+# --- Water gravity settling (source-block, full-voxel) ---------------------
+# Mirror of the inner shell's settling, with the OUTWARD depth convention: here
+# higher depth = higher elevation, so "down" (toward sea level) = LOWER depth.
+# Water falls to the air voxel at depth-1 first; at depth 0 (sea level) it hands
+# off to the inner shell (depth 0) so coastal pools drain into the subsurface;
+# otherwise it spreads sideways into same-level air. Never flows upward. Dig
+# events seed the frontier; a Timer drains it so water creeps in over time.
+const FLOW_HZ       := 10.0  # settling ticks per second
+const FLOW_PER_TICK := 64    # max cells processed per tick (per face)
+var _flow_timer: Timer = null
+var _active_water := {}        # gk → [c, r, d]  (membership + payload)
+var _active_order : Array = [] # FIFO of gk for round-robin draining
+
 
 func _ready() -> void:
 	_build_face()
@@ -97,6 +110,14 @@ func _build_face() -> void:
 	# data is loaded. Without this, faces built early cull seam walls toward
 	# not-yet-loaded faces, leaving invisible side walls until a nearby dig.
 	_rebuild_seam_edges.call_deferred()
+
+	# Water settling tick. Stays stopped until a dig (or seam/shell hand-off)
+	# seeds the frontier, then runs until the water has nowhere left to flow.
+	_flow_timer = Timer.new()
+	_flow_timer.wait_time = 1.0 / FLOW_HZ
+	_flow_timer.one_shot = false
+	_flow_timer.timeout.connect(_on_flow_tick)
+	add_child(_flow_timer)
 
 	print("CubeFace %d: done" % face_id)
 
@@ -367,14 +388,21 @@ func _add_ocean_tops_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int,
 
 
 func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
-	var old_inst: MeshInstance3D = _chunk_insts.get(key) as MeshInstance3D
+	# Retrieve UNTYPED (no `as` cast) — `as` on a freed object throws "Trying to
+	# cast a freed object". Always erase the dict entry after freeing: the water
+	# instance is only re-stored when the water mesh is non-empty, so a chunk
+	# whose water just emptied would otherwise leave a stale freed reference that
+	# crashes the next rebuild (aborting it mid-way → missing/transparent mesh).
+	var old_inst = _chunk_insts.get(key)
 	if old_inst != null and is_instance_valid(old_inst):
 		old_inst.visible = false
 		old_inst.queue_free()
-	var old_water: MeshInstance3D = _water_chunk_insts.get(key) as MeshInstance3D
+	_chunk_insts.erase(key)
+	var old_water = _water_chunk_insts.get(key)
 	if old_water != null and is_instance_valid(old_water):
 		old_water.visible = false
 		old_water.queue_free()
+	_water_chunk_insts.erase(key)
 	if not _chunk_data.has(key):
 		return
 	var chunk: PackedByteArray = _chunk_data[key] as PackedByteArray
@@ -443,6 +471,181 @@ func mat_at(col: int, row: int, depth: int) -> int:
 	return ChunkLoader.voxel(_chunk_data[key], col % CHUNK_SIZE, row % CHUNK_SIZE, depth)
 
 
+# Add a water cell to the settling frontier (deduped) and ensure the flow tick
+# is running. Out-of-bounds / out-of-depth cells are ignored so call sites don't
+# each have to guard.
+func _enqueue_water(c: int, r: int, d: int) -> void:
+	if c < 0 or c >= _face_res or r < 0 or r >= _face_res:
+		return
+	if d < 0 or d >= CHUNK_SIZE:
+		return
+	var gk: int = (c * _face_res + r) * CHUNK_SIZE + d
+	if _active_water.has(gk):
+		return
+	_active_water[gk] = [c, r, d]
+	_active_order.push_back(gk)
+	if _flow_timer != null and _flow_timer.is_stopped():
+		_flow_timer.start()
+
+
+# Write mat-2 into the in-face voxel (c, r, d) and record its chunk as dirty.
+# Returns false if the chunk isn't loaded. Caller is responsible for bounds.
+func _set_water(c: int, r: int, d: int, dirty: Dictionary) -> bool:
+	var cx: int = c / CHUNK_SIZE;  var cy: int = r / CHUNK_SIZE
+	var lc: int = c % CHUNK_SIZE;  var lr: int = r % CHUNK_SIZE
+	var key: int = cx * chunks_per_edge + cy
+	if not _chunk_data.has(key):
+		return false
+	var data: PackedByteArray = _chunk_data[key]
+	data[lc + CHUNK_SIZE * (lr + CHUNK_SIZE * d)] = 2
+	_chunk_data[key] = data
+	dirty[key] = [cx, cy]
+	return true
+
+
+# Called by a neighbouring face when water flows across the cube-face seam into
+# this face. Writes the water, re-meshes the touched chunk immediately, and adds
+# the cell to this face's frontier so it keeps flowing on this face's tick.
+func seed_external_water(col: int, row: int, depth: int) -> void:
+	if mat_at(col, row, depth) != 0:
+		return
+	var dirty := {}
+	if not _set_water(col, row, depth, dirty):
+		return
+	var rebuilt := {}
+	_rebuild_dirty_chunks(dirty, rebuilt)
+	_enqueue_water(col, row, depth)
+
+
+# Re-mesh every chunk the flow tick wrote water into (render + ocean-top mesh).
+# Collision is unchanged (air↔water are both non-solid), so it isn't rebuilt.
+# `rebuilt` dedupes against any later neighbour rebuilds.
+func _rebuild_dirty_chunks(dirty: Dictionary, rebuilt: Dictionary) -> void:
+	for entry in dirty.values():
+		var dx: int = (entry as Array)[0]
+		var dy: int = (entry as Array)[1]
+		var dkey: int = dx * chunks_per_edge + dy
+		if not rebuilt.has(dkey) and _chunk_data.has(dkey):
+			rebuilt[dkey] = true
+			_rebuild_chunk(dx, dy, dkey)
+
+
+# Apply the flow rule to one water cell. Falls toward sea level (depth-1) first;
+# at depth 0 hands the water off to the inner shell; otherwise spreads into
+# same-level air (in-face or across a seam). Returns true if any water moved.
+func _settle_one(c: int, r: int, d: int, dirty: Dictionary) -> bool:
+	if mat_at(c, r, d) != 2:
+		return false
+	# Fall toward sea level (lower depth = lower elevation).
+	if d - 1 >= 0:
+		if mat_at(c, r, d - 1) == 0 and _set_water(c, r, d - 1, dirty):
+			_enqueue_water(c, r, d - 1)
+			return true
+	elif _fall_into_inner(c, r):
+		# At sea level: hand off to the inner shell's depth 0 below.
+		return true
+	# Otherwise spread sideways into same-level air.
+	var moved := false
+	for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var nc: int = c + dir.x
+		var nr: int = r + dir.y
+		if nc >= 0 and nc < _face_res and nr >= 0 and nr < _face_res:
+			if mat_at(nc, nr, d) == 0 and _set_water(nc, nr, d, dirty):
+				_enqueue_water(nc, nr, d)
+				moved = true
+		elif _cross_seam_water(nc, nr, d):
+			moved = true
+	return moved
+
+
+# Drop sea-level water into the inner shell: if the inner face's depth-0 voxel
+# directly below (same col/row) is air, hand the water to it so it keeps falling
+# inward on the inner shell's own tick. The two shells meet at r = planet_radius.
+func _fall_into_inner(c: int, r: int) -> bool:
+	var inner := get_parent().get_node_or_null("InnerCubeFace_%d" % face_id) as InnerCubeFace
+	if inner == null or not is_instance_valid(inner):
+		return false
+	if inner.mat_at(c, r, 0) != 0:
+		return false
+	inner.seed_external_water(c, r, 0)
+	return true
+
+
+# Flow sideways across a cube-face seam: re-project the out-of-bounds neighbour
+# (nc, nr) to its owning face and, if that cell is air, hand the water off to
+# that face. Depth is radial and shared across all faces, so it carries over.
+func _cross_seam_water(nc: int, nr: int, d: int) -> bool:
+	var u := (float(nc) + 0.5) / float(_face_res)
+	var v := (float(nr) + 0.5) / float(_face_res)
+	var unit := face_uv_to_unit(face_id, u, v)
+	var rr := unit_to_face_col_row(unit, _face_res)
+	var nface := int(rr[0])
+	if nface == face_id:
+		return false
+	var nb := get_parent().get_node_or_null("CubeFace_%d" % nface) as CubeFace
+	if nb == null or not is_instance_valid(nb):
+		return false
+	var ncol: int = int(rr[1]);  var nrow: int = int(rr[2])
+	if nb.mat_at(ncol, nrow, d) != 0:
+		return false
+	nb.seed_external_water(ncol, nrow, d)
+	return true
+
+
+# Seed the settling frontier with the water cells around a just-dug voxel, so
+# adjacent ocean/water starts creeping into the new air on the next tick. Covers
+# the depth-above cell (water falls in), same-level/below water, and seam
+# neighbours (a coastal dig may border ocean on an adjacent face).
+func _seed_flow_around(col: int, row: int, depth: int) -> void:
+	for n in [[col + 1, row, depth], [col - 1, row, depth],
+			  [col, row + 1, depth], [col, row - 1, depth],
+			  [col, row, depth - 1], [col, row, depth + 1]]:
+		var nc: int = n[0];  var nr: int = n[1];  var nd: int = n[2]
+		if nc >= 0 and nc < _face_res and nr >= 0 and nr < _face_res:
+			if mat_at(nc, nr, nd) == 2:
+				_enqueue_water(nc, nr, nd)
+		elif nd == depth:
+			# Lateral seam neighbour — enqueue on the owning face if it's water.
+			var u := (float(nc) + 0.5) / float(_face_res)
+			var v := (float(nr) + 0.5) / float(_face_res)
+			var unit := face_uv_to_unit(face_id, u, v)
+			var rr := unit_to_face_col_row(unit, _face_res)
+			var nface := int(rr[0])
+			if nface == face_id:
+				continue
+			var nb := get_parent().get_node_or_null("CubeFace_%d" % nface) as CubeFace
+			if nb == null or not is_instance_valid(nb):
+				continue
+			var ncol: int = int(rr[1]);  var nrow: int = int(rr[2])
+			if nb.mat_at(ncol, nrow, nd) == 2:
+				nb._enqueue_water(ncol, nrow, nd)
+
+
+# Drain the settling frontier: process up to FLOW_PER_TICK water cells, then
+# re-mesh the chunks they touched. Water is non-solid (air↔water both open to
+# _is_solid_at), so only render/ocean meshes rebuild — collision is untouched.
+func _on_flow_tick() -> void:
+	if _active_order.is_empty():
+		_flow_timer.stop()
+		return
+	var dirty := {}
+	var processed := 0
+	while processed < FLOW_PER_TICK and not _active_order.is_empty():
+		var gk: int = _active_order.pop_front()
+		var payload = _active_water.get(gk)
+		_active_water.erase(gk)
+		if payload == null:
+			continue
+		var c: int = payload[0];  var r: int = payload[1];  var d: int = payload[2]
+		if _settle_one(c, r, d, dirty):
+			_enqueue_water(c, r, d)  # still a source — keep feeding next tick
+		processed += 1
+	var rebuilt := {}
+	_rebuild_dirty_chunks(dirty, rebuilt)
+	if _active_order.is_empty():
+		_flow_timer.stop()
+
+
 # After a dig at a face-edge cell, the ADJACENT cube face's seam voxels may now
 # border new air and need their walls re-meshed — otherwise digging at a seam
 # leaves see-through holes (the neighbour face still shows its old "both solid,
@@ -487,6 +690,9 @@ func remove_voxel(col: int, row: int, depth: int) -> bool:
 		return false
 	data[lc + CHUNK_SIZE * (lr + CHUNK_SIZE * depth)] = 0
 	_chunk_data[key] = data
+	# Seed water settling: adjacent ocean/water creeps into the new air over the
+	# next ticks (gravity flow), instead of snap-filling on the dig.
+	_seed_flow_around(col, row, depth)
 	_build_chunk_collision.call_deferred(cx, cy)
 	_rebuild_chunk(cx, cy, key)
 	for nb in [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]:
@@ -530,6 +736,8 @@ func remove_top_voxel(col: int, row: int) -> bool:
 	var idx := lc + CHUNK_SIZE * (lr + CHUNK_SIZE * top)
 	data[idx] = 0
 	_chunk_data[key] = data
+	# Seed water settling (gravity flow over time) — see remove_voxel.
+	_seed_flow_around(col, row, top)
 
 	# Per-voxel mesher reads occupancy directly, so there is no grid to update;
 	# just rebuild this chunk's mesh + collision and refresh the four neighbours
