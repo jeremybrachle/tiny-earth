@@ -69,47 +69,22 @@ var _active_order : Array = [] # FIFO of gk for round-robin draining
 
 
 func _ready() -> void:
-	_build_face()
+	pass  # The build is driven externally by VoxelPlanet.build_planet_async() so
+		  # the planet can assemble progressively across frames (loading screen).
 
 
-func _build_face() -> void:
+# --- Staged build API (driven by VoxelPlanet's orchestrator) ---------------
+# _build_face() was split into init / load / build-chunk / seam steps so the
+# orchestrator can interleave them across frames (await between batches),
+# rendering the planet live instead of blocking the main thread before frame 1.
+
+func init_face() -> void:
 	_mat = ShaderMaterial.new()
 	(_mat as ShaderMaterial).shader = load("res://shaders/voxel.gdshader") as Shader
 	_water_mat = ShaderMaterial.new()
 	(_water_mat as ShaderMaterial).shader = load("res://shaders/water.gdshader") as Shader
 
 	_face_res = CHUNK_SIZE * chunks_per_edge
-
-	print("CubeFace %d: building %d×%d chunks" % [face_id, chunks_per_edge, chunks_per_edge])
-
-	# Pass 1: load all chunks. Raw bytes are kept so the per-voxel mesher can look
-	# up neighbour occupancy across chunk boundaries (no derived grid needed).
-	for cx in chunks_per_edge:
-		for cy in chunks_per_edge:
-			var data := ChunkLoader.load(face_id, cx, cy)
-			if data.is_empty():
-				continue
-			_chunk_data[cx * chunks_per_edge + cy] = data
-
-	# Pass 2: build per-chunk land + ocean meshes.
-	for cx in chunks_per_edge:
-		for cy in chunks_per_edge:
-			var key := cx * chunks_per_edge + cy
-			if _chunk_data.has(key):
-				_rebuild_chunk(cx, cy, key)
-
-	# Pass 3: per-chunk collision. Each 16×16 chunk gets its own CollisionShape3D
-	# matching its rendered solid faces, so the solid you see is the solid you hit.
-	# On a dig only the affected chunk (+ neighbours) is rebuilt, never all 65536.
-	for cx in chunks_per_edge:
-		for cy in chunks_per_edge:
-			_build_chunk_collision(cx, cy)
-
-	# Deferred so it runs after every sibling face has finished _ready() (faces
-	# build sequentially): re-mesh the edge chunks now that cross-face neighbour
-	# data is loaded. Without this, faces built early cull seam walls toward
-	# not-yet-loaded faces, leaving invisible side walls until a nearby dig.
-	_rebuild_seam_edges.call_deferred()
 
 	# Water settling tick. Stays stopped until a dig (or seam/shell hand-off)
 	# seeds the frontier, then runs until the water has nowhere left to flow.
@@ -119,11 +94,47 @@ func _build_face() -> void:
 	_flow_timer.timeout.connect(_on_flow_tick)
 	add_child(_flow_timer)
 
-	print("CubeFace %d: done" % face_id)
+
+# Pass 1: load all chunks. Raw bytes are kept so the per-voxel mesher can look
+# up neighbour occupancy across chunk boundaries (no derived grid needed). Must
+# complete for ALL faces before meshing so cross-face seam culling is correct.
+func load_chunks() -> void:
+	for cx in chunks_per_edge:
+		for cy in chunks_per_edge:
+			var data := ChunkLoader.load(face_id, cx, cy)
+			if data.is_empty():
+				continue
+			_chunk_data[cx * chunks_per_edge + cy] = data
 
 
-# Re-mesh the chunks along all four face edges (run once, deferred, at load).
-func _rebuild_seam_edges() -> void:
+func has_chunk(cx: int, cy: int) -> bool:
+	return _chunk_data.has(cx * chunks_per_edge + cy)
+
+
+# Build one chunk's land + ocean mesh and its matching collision shape. No-op if
+# the chunk is unloaded. Called once per chunk by the orchestrator (batched).
+func build_chunk(cx: int, cy: int) -> void:
+	var key := cx * chunks_per_edge + cy
+	if not _chunk_data.has(key):
+		return
+	_rebuild_chunk(cx, cy, key)
+	_build_chunk_collision(cx, cy)
+
+
+# Approximate world-space centre of a chunk on this shell — used by the
+# orchestrator to order the build (spiral out from the spawn point).
+func chunk_world_center(cx: int, cy: int) -> Vector3:
+	var cpe := float(chunks_per_edge)
+	var u := (float(cx) + 0.5) / cpe
+	var v := (float(cy) + 0.5) / cpe
+	return face_uv_to_unit(face_id, u, v) * planet_radius
+
+
+# Re-mesh the chunks along all four face edges. Run once by the orchestrator
+# AFTER every face has loaded its data, so cross-face neighbour lookups resolve
+# (faces built without it cull seam walls toward not-yet-loaded faces, leaving
+# invisible side walls until a nearby dig).
+func rebuild_seam_edges() -> void:
 	var last := chunks_per_edge - 1
 	var seen := {}
 	for i in chunks_per_edge:

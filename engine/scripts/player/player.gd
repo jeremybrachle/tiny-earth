@@ -214,8 +214,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		else:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
-	if event is InputEventKey and event.keycode == KEY_ESCAPE and event.pressed:
-		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	# Esc is owned by the PauseMenu overlay (toggles get_tree().paused). The player
+	# no longer frees the mouse on Esc — pausing serves that role now.
 
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		var dx: float = clamp(event.relative.x, -30.0, 30.0)

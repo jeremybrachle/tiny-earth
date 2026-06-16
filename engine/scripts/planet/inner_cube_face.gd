@@ -58,10 +58,15 @@ var _active_order : Array = [] # FIFO of gk for round-robin draining
 
 
 func _ready() -> void:
-	_build_face()
+	pass  # The build is driven externally by VoxelPlanet.build_planet_async() so
+		  # the planet can assemble progressively across frames (loading screen).
 
 
-func _build_face() -> void:
+# --- Staged build API (driven by VoxelPlanet's orchestrator) ---------------
+# Mirror of CubeFace's staged API so the orchestrator can drive outer and inner
+# shells through the same load → build-chunk → seam pipeline across frames.
+
+func init_face() -> void:
 	_mat = ShaderMaterial.new()
 	(_mat as ShaderMaterial).shader = load("res://shaders/inner_voxel.gdshader") as Shader
 	_water_mat = ShaderMaterial.new()
@@ -73,32 +78,6 @@ func _build_face() -> void:
 	_top_mat_grid.resize(_face_res * _face_res)
 	_top_mat_grid.fill(9)  # default rock
 
-	print("InnerCubeFace %d: building %d×%d chunks" % [face_id, chunks_per_edge, chunks_per_edge])
-
-	for cx in chunks_per_edge:
-		for cy in chunks_per_edge:
-			var data := ChunkLoader.load_inner(face_id, cx, cy)
-			if data.is_empty():
-				continue
-			_chunk_data[cx * chunks_per_edge + cy] = data
-			_populate_grid_from_chunk(data, cx, cy)
-
-	for cx in chunks_per_edge:
-		for cy in chunks_per_edge:
-			var key := cx * chunks_per_edge + cy
-			if _chunk_data.has(key):
-				_rebuild_chunk(cx, cy, key)
-
-	for cx in chunks_per_edge:
-		for cy in chunks_per_edge:
-			_build_chunk_collision(cx, cy)
-
-	# Deferred so it runs after every sibling face has finished _ready() (faces
-	# build sequentially): re-mesh the edge chunks now that cross-face neighbour
-	# data is loaded. Without this, faces built early cull seam walls toward
-	# not-yet-loaded faces, leaving invisible side walls until a nearby dig.
-	_rebuild_seam_edges.call_deferred()
-
 	# Water settling tick. Stays stopped until a dig (or seam-in) seeds the
 	# frontier, then runs until the water has nowhere left to flow.
 	_flow_timer = Timer.new()
@@ -107,11 +86,43 @@ func _build_face() -> void:
 	_flow_timer.timeout.connect(_on_flow_tick)
 	add_child(_flow_timer)
 
-	print("InnerCubeFace %d: done" % face_id)
+
+func load_chunks() -> void:
+	for cx in chunks_per_edge:
+		for cy in chunks_per_edge:
+			var data := ChunkLoader.load_inner(face_id, cx, cy)
+			if data.is_empty():
+				continue
+			_chunk_data[cx * chunks_per_edge + cy] = data
+			_populate_grid_from_chunk(data, cx, cy)
 
 
-# Re-mesh the chunks along all four face edges (run once, deferred, at load).
-func _rebuild_seam_edges() -> void:
+func has_chunk(cx: int, cy: int) -> bool:
+	return _chunk_data.has(cx * chunks_per_edge + cy)
+
+
+func build_chunk(cx: int, cy: int) -> void:
+	var key := cx * chunks_per_edge + cy
+	if not _chunk_data.has(key):
+		return
+	_rebuild_chunk(cx, cy, key)
+	_build_chunk_collision(cx, cy)
+
+
+# Approximate world-space centre of a chunk on the INNER shell (just below the
+# crust), so the orchestrator can order it by distance from the spawn point.
+func chunk_world_center(cx: int, cy: int) -> Vector3:
+	var cpe := float(chunks_per_edge)
+	var u := (float(cx) + 0.5) / cpe
+	var v := (float(cy) + 0.5) / cpe
+	var voxel_size := planet_radius / float(chunks_per_edge * CHUNK_SIZE)
+	var r := planet_radius - CHUNK_SIZE * voxel_size
+	return _CubeFaceScript.face_uv_to_unit(face_id, u, v) * r
+
+
+# Re-mesh the chunks along all four face edges. Run once by the orchestrator
+# AFTER every face has loaded its data (see CubeFace.rebuild_seam_edges).
+func rebuild_seam_edges() -> void:
 	var last := chunks_per_edge - 1
 	var seen := {}
 	for i in chunks_per_edge:
@@ -295,11 +306,11 @@ func _add_chunk_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int, cy: 
 					continue
 				if m == 2:
 					continue  # water is never solid — drawn as translucent swim-through
-					          # water by _add_water_to_surface (never a solid/collidable
-					          # face). Stored ocean-ceiling art uses mat 11, not mat 2, so
-					          # this only affects flood-filled water reaching depth 15:
-					          # without it, that bottom-layer water re-solidified into an
-					          # unbreakable blue block. Matches _is_solid_at (mat 2 = open).
+							  # water by _add_water_to_surface (never a solid/collidable
+							  # face). Stored ocean-ceiling art uses mat 11, not mat 2, so
+							  # this only affects flood-filled water reaching depth 15:
+							  # without it, that bottom-layer water re-solidified into an
+							  # unbreakable blue block. Matches _is_solid_at (mat 2 = open).
 
 				var color: Color = MAT_COLORS.get(m, Color(0.4, 0.35, 0.3))
 				var r_out := planet_radius - (float(depth) + 1.0) * voxel_size  # toward surface
