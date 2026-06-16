@@ -165,6 +165,11 @@ python src/export.py --top-n 200
 **Open the engine project:**
 - Open the `engine/` folder as a Godot 4 project in the Godot editor.
 
+**Run via WSL":**
+```bash
+godot --path ~/programming/tiny-earth/engine
+```
+
 ---
 
 ## Legal and Attribution
