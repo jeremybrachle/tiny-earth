@@ -280,6 +280,8 @@ func _on_build_finished() -> void:
         music.start()
 
     # Pause menu is created only now (post-build) so Esc can't pause mid-load.
+    # Settings → Graphics tunes the water appearance live (finds the per-face water
+    # materials the build created).
     var pause_menu := preload("res://scripts/ui/pause_menu.gd").new()
     pause_menu.name = "PauseMenu"
     add_child(pause_menu)

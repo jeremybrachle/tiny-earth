@@ -11,10 +11,16 @@ uniform float wave_base   : hint_range(0.0, 0.5)  = 0.04;  // min lift above sea
 // Single uniform ocean colour. wave_blend drives the geometric displacement ONLY —
 // it is no longer fed into the fragment colour, so the wave rings can never paint as
 // colour/brightness bands across the globe.
-uniform vec4  water_color  : source_color = vec4(0.11, 0.38, 0.66, 1.0);
-uniform float roughness    : hint_range(0.0, 1.0) = 0.42;
-uniform float specular_str : hint_range(0.0, 1.0) = 0.38;
-uniform float emission_str : hint_range(0.0, 1.0) = 0.02;
+uniform vec4  water_color  : source_color = vec4(0.16, 0.47, 0.74, 1.0);
+uniform float roughness    : hint_range(0.0, 1.0) = 0.28;
+uniform float specular_str : hint_range(0.0, 1.0) = 0.48;
+uniform float emission_str : hint_range(0.0, 1.0) = 0.36;
+// Brightness multiplier on the ocean albedo — the player-facing "make it brighter"
+// knob (exposed in Settings → Graphics). >1 pushes the ocean into HDR for a bright,
+// lit look. Stays out of the wave/displacement path, so it can never reintroduce the
+// dark-rings artifact (that came from feeding wave_blend into colour).
+uniform float albedo_mult  : hint_range(0.25, 3.0) = 2.49;
+uniform float water_alpha  : hint_range(0.0, 1.0)  = 0.36;
 
 varying float wave_blend;
 
@@ -32,14 +38,14 @@ void vertex() {
 }
 
 void fragment() {
-	vec3 col = water_color.rgb;
+	vec3 col = water_color.rgb * albedo_mult;
 	ALBEDO    = col;
-	EMISSION  = col * emission_str;
+	EMISSION  = water_color.rgb * emission_str;
 	ROUGHNESS = roughness;
 	SPECULAR  = specular_str;
 	METALLIC  = 0.0;
 	// Translucent so the bathymetric seafloor is faintly visible through the water.
 	// depth_draw_always (see render_mode) stops the overlapping wave fragments from
 	// compounding into dark rings, so we can afford a low alpha again.
-	ALPHA     = 0.5;
+	ALPHA     = water_alpha;
 }
