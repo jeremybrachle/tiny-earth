@@ -96,10 +96,10 @@ func _build_inner_sphere() -> void:
 	mesh_inst.mesh = sphere
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	var img := Image.load_from_file("res://planet/earth_biome_map.png")
-	if img:
+	var tex := load("res://planet/earth_biome_map.png") as Texture2D
+	if tex:
 		mat.albedo_color = Color.WHITE
-		mat.albedo_texture = ImageTexture.create_from_image(img)
+		mat.albedo_texture = tex
 	else:
 		mat.albedo_color = Color(0.45, 0.42, 0.40)
 	mesh_inst.material_override = mat

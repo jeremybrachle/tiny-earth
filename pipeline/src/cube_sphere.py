@@ -21,6 +21,18 @@ FACE_PZ, FACE_NZ = 4, 5
 
 NUM_FACES = 6
 
+# Equiangular (tangent) cube-sphere pre-distortion strength.
+# Maps a linear grid coordinate to an angle so each cell subtends a more equal
+# angle on the sphere, reducing the corner "pinch" of the plain linear mapping.
+#   α = π/4  → full equiangular (most uniform block size)
+#   α → 0    → recovers the plain linear projection (milder)
+# Face boundaries (s = ±1) stay fixed for any α, and the mapping has an exact
+# closed-form inverse (see xyz_to_face_uv). This value is the single source of
+# truth: landmask.py / biomes.py / elevation.py import it, and cube_face.gd
+# mirrors it in GDScript — keep them in sync.
+EQUIANGULAR_ALPHA = math.pi / 4.0
+_TAN_EQUI_ALPHA = math.tan(EQUIANGULAR_ALPHA)
+
 
 def latlon_to_xyz(lat_deg: float, lon_deg: float) -> tuple[float, float, float]:
     """Convert WGS84 lat/lon (degrees) to a unit sphere point."""
@@ -71,6 +83,12 @@ def xyz_to_face_uv(x: float, y: float, z: float) -> tuple[int, float, float]:
             face = FACE_NZ
             u_raw, v_raw = x / (-z), -y / (-z)
 
+    # Invert the equiangular pre-distortion (exact inverse of the tan remap in
+    # face_uv_to_xyz). u_raw, v_raw are tangent-plane coords; recover the linear
+    # grid coordinate before normalizing.
+    u_raw = math.atan(u_raw * _TAN_EQUI_ALPHA) / EQUIANGULAR_ALPHA
+    v_raw = math.atan(v_raw * _TAN_EQUI_ALPHA) / EQUIANGULAR_ALPHA
+
     # u_raw, v_raw are in [-1, 1] — normalize to [0, 1]
     return face, (u_raw + 1.0) / 2.0, (v_raw + 1.0) / 2.0
 
@@ -84,6 +102,11 @@ def face_uv_to_xyz(face: int, u: float, v: float) -> tuple[float, float, float]:
     # Denormalize [0,1] → [-1,1]
     s = u * 2.0 - 1.0
     t = v * 2.0 - 1.0
+
+    # Equiangular pre-distortion: remap the linear grid coordinate through an
+    # angle so each cell subtends a more equal angle (see EQUIANGULAR_ALPHA).
+    s = math.tan(s * EQUIANGULAR_ALPHA) / _TAN_EQUI_ALPHA
+    t = math.tan(t * EQUIANGULAR_ALPHA) / _TAN_EQUI_ALPHA
 
     if face == FACE_PX:
         x, y, z = 1.0, s, t

@@ -32,6 +32,18 @@ https://www.worldwildlife.org/publications/terrestrial-ecoregions-of-the-world
 
 ---
 
+## Audio
+
+### Clair de Lune — Claude Debussy (Suite bergamasque, L. 75, III)
+Public Domain. No attribution required; credited here as a courtesy.
+- **Composition:** Claude Debussy (1862–1918) — public domain (copyright expired).
+- **Recording:** Public-domain recording sourced via Musopen / IMSLP.
+- https://musopen.org/ · https://imslp.org/
+
+Used as the looping ambient background track (`engine/audio/clair_de_lune.mp3`).
+
+---
+
 ## Libraries and Tools
 
 ### Godot Engine 4.x

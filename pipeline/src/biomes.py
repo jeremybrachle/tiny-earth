@@ -29,6 +29,8 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from cube_sphere import EQUIANGULAR_ALPHA
+
 LANDMASK_CACHE_REL   = Path("data/cache/landmask.npy")
 BIOMES_CACHE_REL     = Path("data/cache/biomes.npy")
 ELEVATION_CACHE_REL  = Path("data/cache/elevation.npy")
@@ -141,6 +143,9 @@ def build_biomes(
 
     s = u_flat * 2.0 - 1.0
     t = v_flat * 2.0 - 1.0
+    # Equiangular pre-distortion — must match cube_sphere.face_uv_to_xyz.
+    s = np.tan(s * EQUIANGULAR_ALPHA) / np.tan(EQUIANGULAR_ALPHA)
+    t = np.tan(t * EQUIANGULAR_ALPHA) / np.tan(EQUIANGULAR_ALPHA)
     ones = np.ones_like(s)
 
     for face in range(6):

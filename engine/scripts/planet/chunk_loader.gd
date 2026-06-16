@@ -8,6 +8,18 @@ static func load(face: int, cx: int, cy: int) -> PackedByteArray:
 static func load_inner(face: int, cx: int, cy: int) -> PackedByteArray:
 	return _load_path("res://planet/faces/face_%d/inner_chunk_%d_%d.bin" % [face, cx, cy])
 
+static func load_shell(face: int, shell: int, cx: int, cy: int) -> PackedByteArray:
+	if shell == 0:
+		return ChunkLoader.load(face, cx, cy)
+	elif shell == 1:
+		return load_inner(face, cx, cy)
+	else:
+		push_error("ChunkLoader.load_shell: invalid shell %d" % shell)
+		return PackedByteArray()
+
+static func shells_from_config(planet_config: Dictionary) -> int:
+	return planet_config.get("shells", 2)
+
 static func _load_path(p: String) -> PackedByteArray:
 	var f := FileAccess.open(p, FileAccess.READ)
 	if not f:
