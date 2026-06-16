@@ -45,3 +45,15 @@ func get_volume_linear() -> float:
 func set_volume_linear(v: float) -> void:
 	if _player:
 		_player.volume_db = linear_to_db(clampf(v, 0.0001, 1.0)) if v > 0.0 else -80.0
+
+
+# Stop playback and release the stream + player. Called from World on a manual
+# window close so the AudioStream resource is freed in order instead of lingering
+# into Godot's exit teardown (part of silencing the "resources in use at exit"
+# warning). Safe to call once; the player is detached and freed immediately.
+func stop_and_free() -> void:
+	if _player and is_instance_valid(_player):
+		_player.stop()
+		_player.stream = null
+		_player.queue_free()
+	_player = null

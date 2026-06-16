@@ -30,6 +30,8 @@ var _surface_right := Vector3(0, 0, 1)  # parallel-transported; avoids pole sing
 var _gravity_field: Node = null   # PlanetGenerator (in group "gravity_field"), looked up lazily
 var _water_overlay: ColorRect = null
 var _crosshair: Label = null
+var _crosshair_enabled := true    # user preference (H toggles it off entirely)
+var _world_ready := false         # gates the HUD off during the loading screen
 
 
 func _ready() -> void:
@@ -69,8 +71,22 @@ func _ready() -> void:
 	_crosshair.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_crosshair.add_theme_font_size_override("font_size", 24)
-	_crosshair.visible = true
+	# Hidden until the world finishes building (see on_world_ready); it would
+	# otherwise float over the loading screen. H toggles it off entirely in-game.
+	_crosshair.visible = false
 	hud_cl.add_child(_crosshair)
+
+
+# Crosshair shows only once in-game AND not toggled off by the user (H key).
+func _refresh_crosshair() -> void:
+	if _crosshair:
+		_crosshair.visible = _world_ready and _crosshair_enabled
+
+
+# Called by World once the planet build finishes and the player takes control.
+func on_world_ready() -> void:
+	_world_ready = true
+	_refresh_crosshair()
 
 
 func _physics_process(delta: float) -> void:
@@ -185,6 +201,12 @@ func _physics_process(delta: float) -> void:
 	if _first_person:
 		camera.transform = Transform3D(Basis(Vector3.RIGHT, pitch_rad), Vector3(0.0, 1.6, 0.0) + bob_offset)
 	else:
+		# TODO(bug): third-person aim is inconsistent — a downward mouse move can
+		# pitch the camera up OR down depending on the current yaw. The vertical
+		# rotation is built around the fixed world axis Vector3.RIGHT instead of the
+		# yaw-rotated surface-tangent right axis, so it doesn't track orientation the
+		# way first-person (which is correct) does. Fix: rotate about the actual
+		# surface-aligned right vector. Tracked in HANDOFF misc bugs.
 		var horiz := Basis(surface_normal, deg_to_rad(_yaw))
 		var vert   := Basis(Vector3.RIGHT, pitch_rad)
 		var offset := horiz * (vert * Vector3(0.0, TP_HEIGHT, TP_DISTANCE))
@@ -243,8 +265,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		_toggle_water()
 
 	if event is InputEventKey and event.keycode == KEY_H and event.pressed and not event.echo:
-		if _crosshair:
-			_crosshair.visible = not _crosshair.visible
+		_crosshair_enabled = not _crosshair_enabled
+		_refresh_crosshair()
 
 
 var _water_visible := true

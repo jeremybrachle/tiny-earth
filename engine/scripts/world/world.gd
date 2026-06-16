@@ -31,11 +31,32 @@ var _sun_angle := 0.0
 
 func _ready() -> void:
     Engine.max_fps = 60
+    # Intercept the window-close so we can tear the heavy scene down in order
+    # (see _notification) instead of letting Godot quit immediately — that
+    # immediate path is what logged the "ObjectDB instances leaked / resources
+    # still in use at exit" warnings on a manual close.
+    get_tree().set_auto_accept_quit(false)
     _setup_sky()
     _setup_environment()
     _setup_sun()
     _setup_planet_generator()
     _start_build()
+
+
+# Manual window close (the X button). Free the resource-heavy nodes — the voxel
+# planet (all its chunk meshes, materials, shaders, collision shapes) and the
+# audio player — BEFORE quitting, so they're released in tree order rather than
+# during Godot's final teardown, which reported them as leaked/in-use at exit.
+func _notification(what: int) -> void:
+    if what != NOTIFICATION_WM_CLOSE_REQUEST:
+        return
+    var music := get_node_or_null("/root/Music")
+    if music and music.has_method("stop_and_free"):
+        music.stop_and_free()
+    var planet := get_node_or_null("VoxelPlanet")
+    if planet:
+        planet.free()
+    get_tree().quit()
 
 
 func _process(delta: float) -> void:
@@ -157,8 +178,9 @@ func _start_build() -> void:
     var spawn_pos: Vector3 = player.global_position if player else \
         Vector3(0.0, planet_r, 0.0)
     if player:
-        player.set_physics_process(false)  # no surface yet; also keeps frames free
-        player.visible = false             # hide the capsule; we watch from space
+        player.set_physics_process(false)        # no surface yet; also keeps frames free
+        player.set_process_unhandled_input(false) # don't let a stray click capture the mouse
+        player.visible = false                    # hide the capsule; we watch from space
 
     _setup_observation_camera(spawn_pos, planet_r)
 
@@ -238,7 +260,10 @@ func _on_build_finished() -> void:
     var player := get_node_or_null("Player") as Node3D
     if player:
         player.set_physics_process(true)
+        player.set_process_unhandled_input(true)  # restore look/dig/Esc input
         player.visible = true
+        if player.has_method("on_world_ready"):
+            player.on_world_ready()               # reveal the crosshair HUD
         var pcam := player.get_node_or_null("Camera3D") as Camera3D
         if pcam:
             pcam.current = true   # hand control back to the player camera
