@@ -274,6 +274,12 @@ func _on_build_finished() -> void:
         _loading_layer.queue_free()
         _loading_layer = null
 
+    # Apply any persisted Graphics → Water settings now that the per-face water
+    # materials exist, so a player's saved look is in effect from the first frame.
+    var settings := get_node_or_null("/root/GameSettings")
+    if settings:
+        settings.apply_water()
+
     # Start the ambient music now that the world is built and explorable.
     var music := get_node_or_null("/root/Music")
     if music:

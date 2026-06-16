@@ -14,16 +14,16 @@ extends CanvasLayer
 # → Graphics tunes the live water shader; Settings → Audio holds the music volume.
 
 const MAIN_MENU_SCENE := "res://scenes/main_menu.tscn"
-const WATER_SHADER_PATH := "res://shaders/water.gdshader"
 
-# Player-tunable water uniforms: name, min, max, step, default. Defaults mirror the
-# water.gdshader uniform defaults; "Reset to default" restores these.
+# Player-tunable water uniforms: name, min, max, step. Defaults + persistence live
+# in the GameSettings autoload (GameSettings.WATER_DEFAULTS), the single source of
+# truth, so the sliders, "Reset to Default", and the saved file can't drift.
 const WATER_PARAMS := [
-	["albedo_mult",  0.25, 3.0, 0.01, 2.49],  # brightness
-	["roughness",    0.0,  1.0, 0.01, 0.28],  # lower = sharper sun glint
-	["specular_str", 0.0,  1.0, 0.01, 0.48],  # highlight strength
-	["water_alpha",  0.0,  1.0, 0.01, 0.36],  # opacity
-	["emission_str", 0.0,  1.0, 0.01, 0.36],  # self-glow
+	["albedo_mult",  0.25, 3.0, 0.01],  # brightness
+	["roughness",    0.0,  1.0, 0.01],  # lower = sharper sun glint
+	["specular_str", 0.0,  1.0, 0.01],  # highlight strength
+	["water_alpha",  0.0,  1.0, 0.01],  # opacity
+	["emission_str", 0.0,  1.0, 0.01],  # self-glow
 ]
 
 var _dim: ColorRect = null
@@ -64,6 +64,8 @@ func _open() -> void:
 	_paused = true
 	get_tree().paused = true
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	_set_hud_suppressed(true)   # hide the gameplay crosshair behind the menu
+	_duck_music(true)           # drop the music a touch while paused
 	_show("main")
 	visible = true
 
@@ -71,6 +73,8 @@ func _open() -> void:
 func _resume() -> void:
 	_paused = false
 	get_tree().paused = false
+	_set_hud_suppressed(false)
+	_duck_music(false)
 	# Recapture the mouse for look/dig; the player also recaptures on left-click.
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	visible = false
@@ -206,18 +210,19 @@ func _build_graphics_page() -> void:
 		lbl.custom_minimum_size = Vector2(100, 0)
 		row.add_child(lbl)
 
+		var saved: float = GameSettings.get_water(pname)
 		var slider := HSlider.new()
 		slider.min_value = p[1]
 		slider.max_value = p[2]
 		slider.step = p[3]
-		slider.value = p[4]
+		slider.value = saved
 		slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		slider.value_changed.connect(func(v): _apply_water(pname, v))
 		row.add_child(slider)
 		_water_sliders[pname] = slider
 
 		var vlbl := Label.new()
-		vlbl.text = "%.2f" % float(p[4])
+		vlbl.text = "%.2f" % saved
 		vlbl.custom_minimum_size = Vector2(44, 0)
 		vlbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		row.add_child(vlbl)
@@ -230,44 +235,27 @@ func _build_graphics_page() -> void:
 
 # --- Water tuning ----------------------------------------------------------
 # Each cube_face / inner_cube_face makes its OWN ShaderMaterial.new() for water, so
-# there are ~12 separate water materials sharing one shader. Collect every unique one
-# (dedup by id) so a slider can push its value to all of them at once.
+# there are ~12 separate water materials sharing one shader. GameSettings walks the
+# tree and dedups them; we cache that list so a slider can push to all at once.
 func _collect_water_mats() -> void:
-	var seen := {}
-	_water_mats.clear()
-	var stack: Array = [get_tree().root]
-	while not stack.is_empty():
-		var n: Node = stack.pop_back()
-		if n is MeshInstance3D:
-			var m: Material = (n as MeshInstance3D).material_override
-			if m is ShaderMaterial:
-				var sh: Shader = (m as ShaderMaterial).shader
-				if sh != null and sh.resource_path == WATER_SHADER_PATH:
-					var id := m.get_instance_id()
-					if not seen.has(id):
-						seen[id] = true
-						_water_mats.append(m)
-		for c in n.get_children():
-			stack.append(c)
+	_water_mats = GameSettings.collect_water_mats()
 
 
-# Initialise the sliders from the live material values (falling back to the shader
-# default when a uniform hasn't been overridden yet), so the page reflects reality.
+# Sync the sliders from the saved settings (GameSettings is the source of truth;
+# it has already been applied to the live materials on world load).
 func _sync_water_sliders() -> void:
-	var mat: ShaderMaterial = _water_mats[0] if not _water_mats.is_empty() else null
 	for p in WATER_PARAMS:
 		var pname: String = p[0]
-		var v = mat.get_shader_parameter(pname) if mat else null
-		if v == null:
-			v = p[4]
-		_water_sliders[pname].set_value_no_signal(float(v))
-		_set_water_value_label(pname, float(v))
+		var v: float = GameSettings.get_water(pname)
+		_water_sliders[pname].set_value_no_signal(v)
+		_set_water_value_label(pname, v)
 
 
 func _apply_water(pname: String, value: float) -> void:
 	for m in _water_mats:
 		(m as ShaderMaterial).set_shader_parameter(pname, value)
 	_set_water_value_label(pname, value)
+	GameSettings.set_water(pname, value)   # persist to user://settings.cfg
 
 
 func _set_water_value_label(pname: String, value: float) -> void:
@@ -275,10 +263,26 @@ func _set_water_value_label(pname: String, value: float) -> void:
 
 
 func _reset_water() -> void:
+	GameSettings.reset_water()
 	for p in WATER_PARAMS:
 		var pname: String = p[0]
-		_water_sliders[pname].set_value_no_signal(float(p[4]))
-		_apply_water(pname, float(p[4]))
+		var v: float = GameSettings.get_water(pname)
+		_water_sliders[pname].set_value_no_signal(v)
+		_apply_water(pname, v)
+
+
+# --- Pause side-effects ----------------------------------------------------
+# The player is a sibling under World (World adds both); reach it to toggle its HUD.
+func _set_hud_suppressed(suppressed: bool) -> void:
+	var player := get_parent().get_node_or_null("Player")
+	if player and player.has_method("set_hud_suppressed"):
+		player.set_hud_suppressed(suppressed)
+
+
+func _duck_music(ducked: bool) -> void:
+	var music := get_node_or_null("/root/Music")
+	if music and music.has_method("set_paused_duck"):
+		music.set_paused_duck(ducked)
 
 
 # --- Handlers --------------------------------------------------------------
@@ -291,6 +295,7 @@ func _on_music_volume_changed(v: float) -> void:
 func _on_quit_to_menu() -> void:
 	# Unpause before the scene change, or the freshly loaded menu inherits paused.
 	get_tree().paused = false
+	_duck_music(false)   # leave the menu's music at full level
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	get_tree().change_scene_to_file(MAIN_MENU_SCENE)
 

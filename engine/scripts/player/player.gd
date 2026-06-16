@@ -32,6 +32,7 @@ var _water_overlay: ColorRect = null
 var _crosshair: Label = null
 var _crosshair_enabled := true    # user preference (H toggles it off entirely)
 var _world_ready := false         # gates the HUD off during the loading screen
+var _hud_suppressed := false      # gates the HUD off while the pause menu is open
 
 
 func _ready() -> void:
@@ -77,15 +78,22 @@ func _ready() -> void:
 	hud_cl.add_child(_crosshair)
 
 
-# Crosshair shows only once in-game AND not toggled off by the user (H key).
+# Crosshair shows only once in-game, not toggled off by the user (H key), and not
+# while the pause menu is up (it would otherwise float over the dimmed menu).
 func _refresh_crosshair() -> void:
 	if _crosshair:
-		_crosshair.visible = _world_ready and _crosshair_enabled
+		_crosshair.visible = _world_ready and _crosshair_enabled and not _hud_suppressed
 
 
 # Called by World once the planet build finishes and the player takes control.
 func on_world_ready() -> void:
 	_world_ready = true
+	_refresh_crosshair()
+
+
+# Hide/show the in-game HUD (crosshair) — driven by the pause menu open/close.
+func set_hud_suppressed(suppressed: bool) -> void:
+	_hud_suppressed = suppressed
 	_refresh_crosshair()
 
 

@@ -10,11 +10,22 @@ extends Node
 
 const TRACK     := "res://audio/clair_de_lune.mp3"
 const VOLUME_DB := -14.0
+# Extra attenuation applied while the game is paused (pause-menu ducking). ~5 dB
+# is a clearly audible drop without silencing the track — a literal "−20%" linear
+# cut (~−2 dB) is barely perceptible, so this leans a touch stronger. The music
+# keeps playing under the menu (see PROCESS_MODE_ALWAYS below).
+const DUCK_DB   := -5.0
 
 var _player: AudioStreamPlayer = null
+var _base_db := VOLUME_DB   # slider-set level, before any pause ducking
+var _ducked  := false
 
 
 func _ready() -> void:
+	# Keep playing while get_tree().paused is true — autoloads otherwise pause with
+	# the tree, cutting the music the moment the pause menu opens.
+	process_mode = Node.PROCESS_MODE_ALWAYS
+
 	var stream := load(TRACK) as AudioStream
 	if stream == null:
 		push_warning("Music: %s not found — skipping ambient track" % TRACK)
@@ -37,14 +48,26 @@ func start() -> void:
 		_player.play()
 
 
-# Linear 0..1 volume for the Settings slider (mapped to/from dB). 0 mutes.
+# Linear 0..1 volume for the Settings slider (mapped to/from dB). 0 mutes. Reports
+# the slider-set base level, not the transient paused-duck level.
 func get_volume_linear() -> float:
-	return db_to_linear(_player.volume_db) if _player else db_to_linear(VOLUME_DB)
+	return db_to_linear(_base_db)
 
 
 func set_volume_linear(v: float) -> void:
+	_base_db = linear_to_db(clampf(v, 0.0001, 1.0)) if v > 0.0 else -80.0
+	_apply_volume()
+
+
+# Duck (pause menu open) / restore the music. Composes with the slider level.
+func set_paused_duck(ducked: bool) -> void:
+	_ducked = ducked
+	_apply_volume()
+
+
+func _apply_volume() -> void:
 	if _player:
-		_player.volume_db = linear_to_db(clampf(v, 0.0001, 1.0)) if v > 0.0 else -80.0
+		_player.volume_db = _base_db + (DUCK_DB if _ducked else 0.0)
 
 
 # Stop playback and release the stream + player. Called from World on a manual

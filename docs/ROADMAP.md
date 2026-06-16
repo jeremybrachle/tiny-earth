@@ -172,6 +172,8 @@ Tiny Semantic Earth is planned in nine phases (0–8) that build from repo scaff
 - Splash screen and main menu (new game, spawn point select, quit)
 - Loading screen that displays chunk-build logs while the planet loads in the background; player sees the menu immediately rather than a blank window
 - Spawn point selection — curated list of starting locations (e.g. Times Square, Eiffel Tower, Mount Everest, Amazon rainforest, Sahara, Antarctica)
+- **Settings persistence** — write Audio + Graphics (water appearance) choices to `user://settings.cfg` (`ConfigFile`) so they survive a relaunch (currently session-only; added with the 7.99 water controls)
+- **Shared settings menu** — extract the Audio/Graphics pages into a `settings_menu.gd` reachable from BOTH the main menu and the in-game pause menu (today they exist only in the pause menu)
 - Godot export builds for Windows, macOS, Linux
 - Itch.io or GitHub Releases page with playable download
 - README.md updated with screenshots and demo GIF
@@ -220,6 +222,8 @@ is faster to implement; option (a) is more flexible.
 | 7.96 | All-planet lake water (1,355 NE10m lakes via `--lakes`); inner cavity biome ceiling art (depth-15 biome + ocean colour); inner sphere Earth map texture (`render_map.py`; `SHADING_MODE_UNSHADED`; `rotation_degrees = Vector3(0, 270, 0)`); unshaded inner shell shader (`inner_voxel.gdshader`) | 6.3 | ✅ |
 | 7.97 | Architecture revamp: outer shell rewritten to per-voxel TYPE B mesher; cross-face neighbor stitching via sphere re-projection (no adjacency table); aim-based left-click digging (raycast → shell/depth dispatch). Visually verified. Open: crosshair HUD, invisible sides at face seams. | 6.4 | ✅ |
 | 7.98 | Equiangular cube-sphere distortion fix: `tan(s·α)/tan(α)` remap at all 7 projection sites (cube_sphere.py ×2, landmask/biomes/elevation.py inline numpy ×3, cube_face.gd ×2); full cache rebuild with `--lakes`. Reduces face cell-area variation 5.16× → 1.41×. Nearly backed out (first attempt only updated 4 of 7 sites → continent warping) until the correct scope was identified. Seam invisible-face bug also fixed: cross-face `_is_solid_at` now samples cell centre not corner. | 6.4 | ✅ |
+| 7.99 | Ocean "dark circles" artifact fixed (`water.gdshader`: `depth_draw_always` + single colour uniform). Water visual polish: brighter/HDR + daytime sun glint (`albedo_mult`/`water_alpha` uniforms added). Player-facing water controls under Pause → Settings → **Graphics** (sliders + reset); Settings split into Audio/Graphics sub-pages (`pause_menu.gd` page stack). Subsurface-dig black-screen fixed (`_solid_overlay` removed). | 6.4 | ✅ |
+| **v1.1.0** | **Release (`architecture-revamp` → `main`).** Front-end: main menu, progressive loading screen (one continuous progress bar across all build phases, surface→interior shell split), ambient music (Clair de Lune autoload), pause menu w/ Audio+Graphics sub-pages. Crosshair hidden while paused; music keeps playing (ducked) when paused; Graphics settings persist to `user://settings.cfg`. See `CHANGELOG.md`. | — | ✅ |
 | 8 | OSM fetch + Wikipedia enrich + scoring formula running; top 200 cities placed as Urban voxel clusters | 6 | — |
 | 9 | 20+ landmark meshes placed; skybox added; Godot export builds shipped; portfolio README finalized | 7–8 *(estimate)* | — |
 
@@ -264,13 +268,29 @@ Lune*, Satie *Gymnopédies*, etc.) licensed via Musopen or similar. Long-term id
 "records" scattered on each continent that unlock region-specific traditional/folk music —
 finding a record in Japan plays koto music, one in Brazil plays bossa nova, etc.
 
-### Stretch F — Inner Sphere Visual Upgrade
-The inner sphere is currently a low-poly globe with a flat biome texture. Improvements:
-- Higher-resolution sphere mesh (subdivide SphereMesh) to reduce pixelation at close range
-- Separate water shader on ocean regions of the inner sphere (animated surface, subtle
-  translucency) — requires masking the texture by biome type
-- Land regions with slight normal-map bumpiness to read as terrain rather than a painted ball
-- Matches the "dynamic mini-globe" aesthetic rather than a cheap decoration
+### Stretch F — Inner Sphere Visual Upgrade  *(planned next session)*
+The inner sphere is currently a low-poly globe with a flat, blurry/pixelated biome texture.
+Planned for the next session — sharpness + recolour, keeping continents aligned to the surface:
+- **Resolution / sharpness** — two independent causes: (a) the baked map **texture resolution**
+  (`render_map.py`) and (b) the **SphereMesh subdivision** (low subdivisions facet the silhouette
+  regardless of texture). Bump both; also check texture filtering (point vs linear). Continents
+  stay aligned because the same cube-sphere UV mapping is just sampled finer.
+- **Colours** — the palette is pure data (`MAT_COLORS_RGB` in `render_map.py`). Explore options:
+  greyscale-for-contrast, inverted (white land / black water), or a custom ramp. One table change.
+- Both require a **pipeline re-bake** of the inner texture (run via `wsl bash -lc`, not the MSYS
+  Bash tool — see HANDOFF pipeline gotcha), not a pure code change.
+- Later polish (separate pass): separate water shader on ocean regions (animated, translucent,
+  masked by biome type); slight normal-map bumpiness on land so it reads as terrain, not a
+  painted ball. Matches the "dynamic mini-globe" aesthetic rather than a cheap decoration.
+
+### Stretch H — Realistic Starfield (real star catalogue)
+The night sky's stars are currently procedural noise (`sky_space.gdshader`). Replace them with
+the **actual** stars Earth sees, so the sky is recognisable:
+- Import a star catalogue (HYG database — ~120k stars with RA/Dec + apparent magnitude).
+- Convert RA/Dec → a direction vector; drive star position and brightness from the catalogue.
+- Feed positions + magnitudes into the sky shader (or a points mesh) instead of noise.
+- Note: Tiny Earth currently has no axial rotation / heliocentric model, so a *static* correct
+  sky is the first step; matching rotation/season comes later if a time model is added.
 
 ### Stretch G — City Lights (Night Mode)
 Once Phase 6 cities are placed, add a night-side emissive pass: urban voxel clusters glow
