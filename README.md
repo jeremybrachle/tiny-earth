@@ -5,10 +5,10 @@
 Tiny Semantic Earth is a portfolio research project that asks a deceptively simple question: how few geographic features does it take for a human to recognize a globe as Earth? A Python data pipeline fetches land/ocean boundaries, elevation, biomes, cities, capitals, and landmarks from public datasets, ranks every feature using a composite importance score, and exports only the top N survivors to the game engine. The result is a planet you can walk around in minutes, where every placed landmark was chosen by a scoring formula trained on population, cultural prominence, geographic isolation, and transport importance. The project demonstrates GIS data pipelines, game engine integration, procedural generation, and original research framing.
 
 
-![lakes](lakes.png)
-![water](water.png)
-![demo](demo.png)
-![new](new.png)
+![lakes](images/lakes.png)
+![water](images/water.png)
+![demo](images/demo.png)
+![new](images/new.png)
 
 ---
 
