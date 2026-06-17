@@ -10,8 +10,8 @@ Repository polish + an engineering-hygiene pass. No gameplay changes beyond two 
 ### Added
 - Project `LICENSE` (all rights reserved) for the game/pipeline code; third-party licenses stay in `LICENSES.md`.
 - `.gitattributes` — line-ending normalization plus binary markers for the baked chunks, audio, and images.
-- CI: **Python** (ruff lint + format + pytest with coverage), **GDScript** (gdlint + gdformat + GUT unit tests on headless Godot), and **CodeQL** code scanning. **Dependabot** for pip + GitHub Actions.
-- GUT unit tests for the cube-sphere projection and voxel-address math (`engine/test/`).
+- CI: **Python** (ruff lint + format + pytest with coverage), **GDScript** (gdlint + gdformat), and **CodeQL** code scanning. **Dependabot** for pip + GitHub Actions.
+- GUT unit tests for the cube-sphere projection and voxel-address math (`engine/test/`), runnable locally (headless GUT-on-Godot-4.6 isn't run in CI yet — see the note in `gdscript.yml`).
 - Tooling config: ruff (in `pyproject.toml`), `.gdlintrc`, `.editorconfig`.
 
 ### Changed

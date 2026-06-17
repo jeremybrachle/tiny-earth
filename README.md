@@ -162,7 +162,7 @@ The project's own code is **all rights reserved** — see [LICENSE](LICENSE).
 
 ## Development
 
-CI runs on every push and PR (see the badges up top): Python lint + tests, GDScript lint + unit tests, and CodeQL scanning. To run the same checks locally:
+CI runs on every push and PR (see the badges up top): Python lint + tests, GDScript lint, and CodeQL scanning. The GDScript unit tests (GUT) are run locally. To run the same checks locally:
 
 **Python pipeline** — lint, format, and test:
 ```bash
