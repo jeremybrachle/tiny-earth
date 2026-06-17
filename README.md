@@ -7,7 +7,7 @@
 
 Tiny Earth is a project designed to compress our planet into a walkable quad sphere built with voxels. Kinda like that one popular crafting game you've heard about except this is on a non-flat planet (unfortunately this current model is still geocentric though, I didn't want it to be *too* accurate).
 
-It's not full scale (hence "tiny") but if you ever wanted to walk around a small version of Earth, then you've come to the right place.
+It's not full scale (hence "tiny") but if you ever wanted to walk around a small version of Earth, then you've come to the right place #walkingsimulator
 
 ![lakes](images/lakes.png)
 ![water](images/water.png)

@@ -4,8 +4,12 @@
 # just kidding - include allow list for bare miniumum files needed to run/read
 !/.github/
 !/.gitignore
+!/.gitattributes
+!/.editorconfig
+!/.gdlintrc
 !/ATTRIBUTION.md
 !/CHANGELOG.md
+!/LICENSE
 !/LICENSES.md
 !/README.md
 !/images/
