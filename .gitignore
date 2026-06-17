@@ -1,28 +1,25 @@
-# Godot — generated import cache, editor state, shader binaries
+# ignore EVERYTHING
+/*
+
+# just kidding - include allow list for bare miniumum files needed to run/read
+!/.github/
+!/.gitignore
+!/ATTRIBUTION.md
+!/CHANGELOG.md
+!/LICENSES.md
+!/README.md
+!/images/
+!/pipeline/
+!/engine/
+
+# Ignore generated published local-only artifacts
+# (engine/planet/ baked voxel chunks ARE published on purpose so a fresh clone runs out of the box — see README. Regenerate via pipeline/src/export.py.)
 engine/.godot/
-
-# Godot — export credentials (can contain signing keys)
 engine/export_presets.cfg
-
-# Generated planet chunk files (produced by pipeline/src/export.py)
-engine/planet/
-
-# Pipeline — downloaded/cached geodata (OSM, Wikipedia, elevation, etc.)
-data/
-
-# Python
 **/__pycache__/
 **/*.py[cod]
 **/*.pyo
-pipeline/.pytest_cache/
-pipeline/*.egg-info/
-.venv/
-venv/
-
-# OS
-.DS_Store
-Thumbs.db
-
-docs/
-
-.claude/
+**/.pytest_cache/
+**/*.egg-info/
+**/.venv/
+**/venv/

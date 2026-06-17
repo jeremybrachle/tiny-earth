@@ -1,0 +1,7 @@
+{
+  "planet_radius": 256.0,
+  "resolution": 256,
+  "chunk_size": 16,
+  "chunks_per_edge": 16,
+  "generation_stage": 1
+}
