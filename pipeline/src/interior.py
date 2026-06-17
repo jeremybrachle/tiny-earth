@@ -32,14 +32,14 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-MATERIAL_AIR           = 0
-MATERIAL_OCEAN         = 2
-MATERIAL_ROCK          = 9
-MATERIAL_SEAFLOOR      = 10
+MATERIAL_AIR = 0
+MATERIAL_OCEAN = 2
+MATERIAL_ROCK = 9
+MATERIAL_SEAFLOOR = 10
 MATERIAL_OCEAN_CEILING = 11  # solid stand-in for mat 2 at cavity ceiling — diggable, same colour
 NUM_FACES = 6
 
-BIOMES_CACHE_REL     = Path("data/cache/biomes.npy")
+BIOMES_CACHE_REL = Path("data/cache/biomes.npy")
 BATHYMETRY_CACHE_REL = Path("data/cache/bathymetry.npy")
 
 
@@ -50,7 +50,7 @@ def load_config(config_path: Path) -> dict:
 
 def export_inner_chunks(config: dict, repo_root: Path) -> None:
     resolution = config["planet"]["resolution"]
-    chunk_size  = config["planet"]["chunk_size"]
+    chunk_size = config["planet"]["chunk_size"]
 
     if resolution % chunk_size != 0:
         raise ValueError(
@@ -58,7 +58,7 @@ def export_inner_chunks(config: dict, repo_root: Path) -> None:
         )
 
     biomes_path = repo_root / BIOMES_CACHE_REL
-    bath_path   = repo_root / BATHYMETRY_CACHE_REL
+    bath_path = repo_root / BATHYMETRY_CACHE_REL
 
     if not biomes_path.exists():
         print(f"Error: biomes cache not found at {biomes_path}", file=sys.stderr)
@@ -70,7 +70,7 @@ def export_inner_chunks(config: dict, repo_root: Path) -> None:
         sys.exit(1)
 
     biomes = np.load(biomes_path)
-    bath   = np.load(bath_path)
+    bath = np.load(bath_path)
 
     # Downsample cached grids to match config resolution if needed.
     if biomes.shape[1] != resolution:
@@ -92,7 +92,7 @@ def export_inner_chunks(config: dict, repo_root: Path) -> None:
         face_dir.mkdir(parents=True, exist_ok=True)
         for cx in range(chunks_per_edge):
             for cy in range(chunks_per_edge):
-                raw = bytearray(chunk_size ** 3)
+                raw = bytearray(chunk_size**3)
                 for lc in range(chunk_size):
                     for lr in range(chunk_size):
                         col = cx * chunk_size + lc
@@ -110,7 +110,9 @@ def export_inner_chunks(config: dict, repo_root: Path) -> None:
                             for d in range(n + 1, chunk_size - 1):
                                 raw[lc + chunk_size * (lr + chunk_size * d)] = MATERIAL_ROCK
                             # Innermost depth = ocean ceiling art — solid so it's diggable.
-                            raw[lc + chunk_size * (lr + chunk_size * (chunk_size - 1))] = MATERIAL_OCEAN_CEILING
+                            raw[lc + chunk_size * (lr + chunk_size * (chunk_size - 1))] = (
+                                MATERIAL_OCEAN_CEILING
+                            )
                         else:
                             # Land: rock throughout, biome at the innermost layer (cavity ceiling).
                             for d in range(chunk_size - 1):
@@ -135,11 +137,11 @@ def export_inner_chunks(config: dict, repo_root: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export inner shell chunk files.")
     parser.add_argument("--config", default="pipeline/config/planet.yaml")
-    parser.add_argument("--root",   default=".", help="Repo root directory")
+    parser.add_argument("--root", default=".", help="Repo root directory")
     args = parser.parse_args()
 
     config_path = Path(args.config)
-    repo_root   = Path(args.root).resolve()
+    repo_root = Path(args.root).resolve()
 
     if not config_path.exists():
         print(f"Error: config not found at {config_path}", file=sys.stderr)

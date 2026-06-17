@@ -19,20 +19,20 @@ import yaml
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cube_sphere import latlon_to_xyz, xyz_to_face_uv, face_uv_to_grid  # noqa: E402
+from cube_sphere import face_uv_to_grid, latlon_to_xyz, xyz_to_face_uv  # noqa: E402
 
 # RGB values matching cube_face.gd / inner_cube_face.gd MAT_COLORS
 MAT_COLORS_RGB = {
-    1:  (64,  140,  51),   # land fallback
-    2:  (26,   89, 166),   # ocean
-    3:  (217, 191, 115),   # desert
-    4:  (102, 166,  64),   # temperate
-    5:  (38,  102,  38),   # forest
-    6:  (230, 237, 247),   # snow/ice
-    7:  (26,  122,  31),   # tropical
-    8:  (173, 158,  56),   # savanna
-    9:  (133, 122, 112),   # mountain/rock
-    10: (71,   56,  41),   # seafloor
+    1: (64, 140, 51),  # land fallback
+    2: (26, 89, 166),  # ocean
+    3: (217, 191, 115),  # desert
+    4: (102, 166, 64),  # temperate
+    5: (38, 102, 38),  # forest
+    6: (230, 237, 247),  # snow/ice
+    7: (26, 122, 31),  # tropical
+    8: (173, 158, 56),  # savanna
+    9: (133, 122, 112),  # mountain/rock
+    10: (71, 56, 41),  # seafloor
 }
 DEFAULT_COLOR = (100, 100, 100)
 

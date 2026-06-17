@@ -18,10 +18,10 @@ const WATER_SHADER_PATH := "res://shaders/water.gdshader"
 # Param -> baked default. Single source of truth: pause_menu reads its defaults
 # from here, so the slider defaults and "Reset to Default" can't drift from these.
 const WATER_DEFAULTS := {
-	"albedo_mult":  2.49,
-	"roughness":    0.28,
+	"albedo_mult": 2.49,
+	"roughness": 0.28,
 	"specular_str": 0.48,
-	"water_alpha":  0.36,
+	"water_alpha": 0.36,
 	"emission_str": 0.36,
 }
 

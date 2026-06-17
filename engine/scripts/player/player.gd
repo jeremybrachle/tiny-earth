@@ -1,16 +1,16 @@
 extends CharacterBody3D
 
 const GRAVITY_STRENGTH := 20.0
-const WALK_SPEED       := 5.0
-const SWIM_SPEED       := 2.5
-const JUMP_VELOCITY    := 8.0
-const FLY_SPEED        := WALK_SPEED * 5.0
+const WALK_SPEED := 5.0
+const SWIM_SPEED := 2.5
+const JUMP_VELOCITY := 8.0
+const FLY_SPEED := WALK_SPEED * 5.0
 
 const MOUSE_SENSITIVITY := 0.08  # degrees per pixel
 const PITCH_MIN := -89.0
-const PITCH_MAX :=  89.0
+const PITCH_MAX := 89.0
 const TP_DISTANCE := 4.0
-const TP_HEIGHT   := 1.6
+const TP_HEIGHT := 1.6
 
 const _CubeFaceScript = preload("res://scripts/planet/cube_face.gd")
 
@@ -19,20 +19,20 @@ const _CubeFaceScript = preload("res://scripts/planet/cube_face.gd")
 @onready var player_mesh: MeshInstance3D = $MeshInstance3D
 
 var _first_person := false
-var _flying       := false
-var _noclip       := false   # fly-through-solid toggle (KEY_N); off by default
-var _swimming     := false
-var _swim_bob     := 0.0   # oscillator for camera bob while swimming
-var _yaw:   float = 0.0
+var _flying := false
+var _noclip := false  # fly-through-solid toggle (KEY_N); off by default
+var _swimming := false
+var _swim_bob := 0.0  # oscillator for camera bob while swimming
+var _yaw: float = 0.0
 var _pitch: float = -15.0
 var _surface_right := Vector3(0, 0, 1)  # parallel-transported; avoids pole singularity
 
-var _gravity_field: Node = null   # PlanetGenerator (in group "gravity_field"), looked up lazily
+var _gravity_field: Node = null  # PlanetGenerator (in group "gravity_field"), looked up lazily
 var _water_overlay: ColorRect = null
 var _crosshair: Label = null
-var _crosshair_enabled := true    # user preference (H toggles it off entirely)
-var _world_ready := false         # gates the HUD off during the loading screen
-var _hud_suppressed := false      # gates the HUD off while the pause menu is open
+var _crosshair_enabled := true  # user preference (H toggles it off entirely)
+var _world_ready := false  # gates the HUD off during the loading screen
+var _hud_suppressed := false  # gates the HUD off while the pause menu is open
 
 
 func _ready() -> void:
@@ -46,7 +46,9 @@ func _ready() -> void:
 		var surface_normal := (global_position - planet.global_position).normalized()
 		var axis := Vector3.UP.cross(surface_normal)
 		if axis.length() > 0.001:
-			global_basis = global_basis.rotated(axis.normalized(), Vector3.UP.angle_to(surface_normal))
+			global_basis = global_basis.rotated(
+				axis.normalized(), Vector3.UP.angle_to(surface_normal)
+			)
 		# Snap to planet surface so spawn position stays correct regardless of radius_scale.
 		var raw_r = planet.get("planet_radius")
 		var planet_r: float = float(raw_r) if raw_r != null else 256.0
@@ -100,7 +102,7 @@ func set_hud_suppressed(suppressed: bool) -> void:
 func _physics_process(delta: float) -> void:
 	if not planet:
 		return
-	var gravity_dir    := _gravity_dir()
+	var gravity_dir := _gravity_dir()
 	var surface_normal := -gravity_dir
 	up_direction = surface_normal
 
@@ -109,22 +111,23 @@ func _physics_process(delta: float) -> void:
 	# Project last frame's right onto the current tangent plane (parallel transport).
 	# This is stable at all latitudes including poles — no cross-product singularity.
 	var right_proj := _surface_right - _surface_right.dot(surface_normal) * surface_normal
-	var right := right_proj.normalized() if right_proj.length() > 0.001 \
+	var right := (
+		right_proj.normalized()
+		if right_proj.length() > 0.001
 		else Vector3(1, 0, 0).cross(surface_normal).normalized()
+	)
 	_surface_right = right
 	var forward_dir := surface_normal.cross(right).normalized()
 	var yaw_rot := Basis(surface_normal, deg_to_rad(_yaw))
-	global_basis = Basis(
-		yaw_rot * right,
-		surface_normal,
-		yaw_rot * (-forward_dir)
-	).orthonormalized()
+	global_basis = (
+		Basis(yaw_rot * right, surface_normal, yaw_rot * (-forward_dir)).orthonormalized()
+	)
 
-	var cam_fwd   := _project_to_plane(-camera.global_basis.z, surface_normal)
-	var cam_right := _project_to_plane( camera.global_basis.x, surface_normal)
+	var cam_fwd := _project_to_plane(-camera.global_basis.z, surface_normal)
+	var cam_right := _project_to_plane(camera.global_basis.x, surface_normal)
 	var input := Vector2(
 		Input.get_action_strength("ui_right") - Input.get_action_strength("ui_left"),
-		Input.get_action_strength("ui_down")  - Input.get_action_strength("ui_up")
+		Input.get_action_strength("ui_down") - Input.get_action_strength("ui_up")
 	)
 
 	# Only the outer surface has water. Gate the swim check by radius so that
@@ -141,8 +144,8 @@ func _physics_process(delta: float) -> void:
 
 	if _flying:
 		var fly_dir := cam_fwd * -input.y + cam_right * input.x
-		fly_dir += surface_normal * float(Input.is_action_pressed("ui_accept"))   # Space = up
-		fly_dir -= surface_normal * float(Input.is_key_pressed(KEY_CTRL))         # Ctrl  = down
+		fly_dir += surface_normal * float(Input.is_action_pressed("ui_accept"))  # Space = up
+		fly_dir -= surface_normal * float(Input.is_key_pressed(KEY_CTRL))  # Ctrl  = down
 		if fly_dir.length() > 0.01:
 			# Collision-aware fly (Issue 3): move_and_collide stops the player at solid
 			# crust instead of noclipping through it. The apparent "hollow voxels" were
@@ -163,8 +166,8 @@ func _physics_process(delta: float) -> void:
 		if not is_on_floor():
 			velocity += gravity_dir * GRAVITY_STRENGTH * delta
 
-		var wish_dir  := cam_fwd * -input.y + cam_right * input.x
-		var vert_vel  := velocity.project(gravity_dir)
+		var wish_dir := cam_fwd * -input.y + cam_right * input.x
+		var vert_vel := velocity.project(gravity_dir)
 		var horiz_vel := velocity - vert_vel
 
 		if wish_dir.length() > 0.01:
@@ -185,8 +188,8 @@ func _physics_process(delta: float) -> void:
 		if not is_on_floor():
 			velocity += gravity_dir * GRAVITY_STRENGTH * delta
 
-		var wish_dir  := cam_fwd * -input.y + cam_right * input.x
-		var vert_vel  := velocity.project(gravity_dir)
+		var wish_dir := cam_fwd * -input.y + cam_right * input.x
+		var vert_vel := velocity.project(gravity_dir)
 		var horiz_vel := velocity - vert_vel
 
 		if wish_dir.length() > 0.01:
@@ -207,7 +210,9 @@ func _physics_process(delta: float) -> void:
 	var pitch_rad := deg_to_rad(_pitch)
 	var bob_offset := global_basis.y * sin(_swim_bob) * 0.12 if _swimming else Vector3.ZERO
 	if _first_person:
-		camera.transform = Transform3D(Basis(Vector3.RIGHT, pitch_rad), Vector3(0.0, 1.6, 0.0) + bob_offset)
+		camera.transform = Transform3D(
+			Basis(Vector3.RIGHT, pitch_rad), Vector3(0.0, 1.6, 0.0) + bob_offset
+		)
 	else:
 		# TODO(bug): third-person aim is inconsistent — a downward mouse move can
 		# pitch the camera up OR down depending on the current yaw. The vertical
@@ -216,7 +221,7 @@ func _physics_process(delta: float) -> void:
 		# way first-person (which is correct) does. Fix: rotate about the actual
 		# surface-aligned right vector. Tracked in HANDOFF misc bugs.
 		var horiz := Basis(surface_normal, deg_to_rad(_yaw))
-		var vert   := Basis(Vector3.RIGHT, pitch_rad)
+		var vert := Basis(Vector3.RIGHT, pitch_rad)
 		var offset := horiz * (vert * Vector3(0.0, TP_HEIGHT, TP_DISTANCE))
 		camera.transform = Transform3D(Basis.IDENTITY, offset + bob_offset)
 		# Camera collision ("spring arm"): if solid sits between the player's head
@@ -250,9 +255,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		var dx: float = clamp(event.relative.x, -30.0, 30.0)
 		var dy: float = clamp(event.relative.y, -30.0, 30.0)
-		_yaw   -= dx * MOUSE_SENSITIVITY
+		_yaw -= dx * MOUSE_SENSITIVITY
 		_pitch -= dy * MOUSE_SENSITIVITY
-		_pitch  = clamp(_pitch, PITCH_MIN, PITCH_MAX)
+		_pitch = clamp(_pitch, PITCH_MIN, PITCH_MAX)
 
 	if event is InputEventKey and event.keycode == KEY_F and event.pressed and not event.echo:
 		_first_person = not _first_person
@@ -279,6 +284,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 var _water_visible := true
 
+
 func _toggle_water() -> void:
 	_water_visible = not _water_visible
 	if not planet:
@@ -291,15 +297,16 @@ func _toggle_water() -> void:
 
 const DIG_REACH := 10.0
 
+
 # Raycast from the camera and remove the voxel the player is aiming at.
 # Works on both the outer shell and inner shell at any depth.
 func _break_voxel_aimed() -> void:
 	if not planet:
 		return
-	var space   := get_world_3d().direct_space_state
+	var space := get_world_3d().direct_space_state
 	var cam_pos := camera.global_position
 	var cam_fwd := -camera.global_basis.z
-	var query   := PhysicsRayQueryParameters3D.create(cam_pos, cam_pos + cam_fwd * DIG_REACH)
+	var query := PhysicsRayQueryParameters3D.create(cam_pos, cam_pos + cam_fwd * DIG_REACH)
 	query.exclude = [get_rid()]
 	var hit := space.intersect_ray(query)
 	if hit.is_empty():
@@ -308,17 +315,17 @@ func _break_voxel_aimed() -> void:
 	# Step 0.5 units into the hit block along the inward normal so the radius
 	# sample lands clearly inside the voxel rather than on its face boundary.
 	var inside: Vector3 = hit.position - hit.normal * 0.5
-	var rel:    Vector3 = inside - planet.global_position
-	var r:      float   = rel.length()
-	var unit:   Vector3 = rel.normalized()
+	var rel: Vector3 = inside - planet.global_position
+	var r: float = rel.length()
+	var unit: Vector3 = rel.normalized()
 
 	var fr: Array = _CubeFaceScript.unit_to_face_col_row(unit, planet.resolution)
-	var face    := int(fr[0])
-	var col     := int(fr[1])
-	var row     := int(fr[2])
+	var face := int(fr[0])
+	var col := int(fr[1])
+	var row := int(fr[2])
 
 	var planet_r := _planet_radius()
-	var vox      := planet_r / float(planet.resolution)
+	var vox := planet_r / float(planet.resolution)
 
 	if r >= planet_r - vox:
 		# Outer shell — outward convention: voxel d occupies the radial band
@@ -342,7 +349,9 @@ func _break_voxel_aimed() -> void:
 func _break_voxel_underfoot() -> void:
 	if not planet:
 		return
-	var result: Array = _CubeFaceScript.unit_to_face_col_row(global_position.normalized(), planet.resolution)
+	var result: Array = _CubeFaceScript.unit_to_face_col_row(
+		global_position.normalized(), planet.resolution
+	)
 	var face_idx := int(result[0])
 	var col := int(result[1])
 	var row := int(result[2])
@@ -368,7 +377,9 @@ func _voxel_mat_at(pos: Vector3) -> int:
 	var planet_r := _planet_radius()
 	var vox := planet_r / float(planet.resolution)
 	var fr: Array = _CubeFaceScript.unit_to_face_col_row(rel.normalized(), planet.resolution)
-	var face := int(fr[0]); var col := int(fr[1]); var row := int(fr[2])
+	var face := int(fr[0])
+	var col := int(fr[1])
+	var row := int(fr[2])
 	if r >= planet_r - vox:
 		var depth: int = int(floor((r - planet_r) / vox)) + 1
 		var cf = planet.get_node_or_null("CubeFace_%d" % face)

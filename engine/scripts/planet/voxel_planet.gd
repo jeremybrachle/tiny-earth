@@ -12,18 +12,19 @@ signal build_finished
 # it generate” feel: lower = more visibly progressive, higher = faster.
 const CHUNKS_PER_FRAME := 6
 
-var resolution: int     = 256
+var resolution: int = 256
 var planet_radius: float = 256.0
 var chunks_per_edge: int = 16
 
-var _faces: Array = []        # all 12 shell faces (6 outer CubeFace + 6 inner InnerCubeFace)
+var _faces: Array = []  # all 12 shell faces (6 outer CubeFace + 6 inner InnerCubeFace)
 var _outer_faces: Array = []  # the 6 outer crust faces (surface continents/oceans)
 var _inner_faces: Array = []  # the 6 inner shell faces (the hollow interior)
 
+
 func _ready() -> void:
 	var cfg := _load_planet_config()
-	resolution      = cfg.get("resolution",     256)
-	planet_radius   = cfg.get("planet_radius",  float(resolution))
+	resolution = cfg.get("resolution", 256)
+	planet_radius = cfg.get("planet_radius", float(resolution))
 	chunks_per_edge = cfg.get("chunks_per_edge", resolution / 16)
 
 	# Keep the base sphere collider in sync with the rendered radius so ocean
@@ -37,7 +38,7 @@ func _ready() -> void:
 	# spreads across frames behind the loading screen.
 	for face in 6:
 		var cf := preload("res://scripts/planet/cube_face.gd").new()
-		cf.face_id       = face
+		cf.face_id = face
 		cf.chunks_per_edge = chunks_per_edge
 		cf.planet_radius = planet_radius
 		cf.name = "CubeFace_%d" % face
@@ -47,9 +48,9 @@ func _ready() -> void:
 
 	for face in 6:
 		var icf := preload("res://scripts/planet/inner_cube_face.gd").new()
-		icf.face_id        = face
+		icf.face_id = face
 		icf.chunks_per_edge = chunks_per_edge
-		icf.planet_radius  = planet_radius
+		icf.planet_radius = planet_radius
 		icf.name = "InnerCubeFace_%d" % face
 		add_child(icf)
 		_faces.append(icf)
@@ -71,8 +72,8 @@ func _ready() -> void:
 #   seam-stitch 95–100%.
 func build_planet_async(spawn_pos: Vector3) -> void:
 	const PROGRESS_SCALE := 1000
-	const LOAD_END := 50    # phase 1 fills 0–5% of the bar
-	const MESH_END := 950   # phase 2 fills 5–95%; seams fill the last 5%
+	const LOAD_END := 50  # phase 1 fills 0–5% of the bar
+	const MESH_END := 950  # phase 2 fills 5–95%; seams fill the last 5%
 
 	# Phase 1 — init + load (must finish for every face before any meshing).
 	build_phase.emit("Loading terrain data…")
@@ -95,7 +96,7 @@ func build_planet_async(spawn_pos: Vector3) -> void:
 	build_phase.emit("Raising continents & oceans…")
 	done = await _mesh_tasks(outer_tasks, done, n_mesh, LOAD_END, mesh_span, PROGRESS_SCALE)
 
-	build_phase.emit("Forming the hollow interior…")
+	build_phase.emit("Digging out the depths…")
 	done = await _mesh_tasks(inner_tasks, done, n_mesh, LOAD_END, mesh_span, PROGRESS_SCALE)
 	build_progress.emit(MESH_END, PROGRESS_SCALE)
 
@@ -103,7 +104,10 @@ func build_planet_async(spawn_pos: Vector3) -> void:
 	build_phase.emit("Stitching seams…")
 	for i in nf:
 		_faces[i].rebuild_seam_edges()
-		build_progress.emit(MESH_END + int(float(i + 1) / float(maxi(nf, 1)) * (PROGRESS_SCALE - MESH_END)), PROGRESS_SCALE)
+		build_progress.emit(
+			MESH_END + int(float(i + 1) / float(maxi(nf, 1)) * (PROGRESS_SCALE - MESH_END)),
+			PROGRESS_SCALE
+		)
 		await get_tree().process_frame
 
 	build_progress.emit(PROGRESS_SCALE, PROGRESS_SCALE)

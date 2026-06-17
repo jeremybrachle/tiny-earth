@@ -8,17 +8,17 @@ extends Node
 # Playback does NOT start automatically: the player triggers it via start() only
 # once the world has finished building and is explorable (see World).
 
-const TRACK     := "res://audio/clair_de_lune.mp3"
+const TRACK := "res://audio/clair_de_lune.mp3"
 const VOLUME_DB := -14.0
 # Extra attenuation applied while the game is paused (pause-menu ducking). ~5 dB
 # is a clearly audible drop without silencing the track — a literal "−20%" linear
 # cut (~−2 dB) is barely perceptible, so this leans a touch stronger. The music
 # keeps playing under the menu (see PROCESS_MODE_ALWAYS below).
-const DUCK_DB   := -5.0
+const DUCK_DB := -5.0
 
 var _player: AudioStreamPlayer = null
-var _base_db := VOLUME_DB   # slider-set level, before any pause ducking
-var _ducked  := false
+var _base_db := VOLUME_DB  # slider-set level, before any pause ducking
+var _ducked := false
 
 
 func _ready() -> void:
@@ -35,9 +35,9 @@ func _ready() -> void:
 		stream.set("loop", true)
 
 	_player = AudioStreamPlayer.new()
-	_player.stream    = stream
+	_player.stream = stream
 	_player.volume_db = VOLUME_DB
-	_player.bus       = "Master"
+	_player.bus = "Master"
 	add_child(_player)
 
 

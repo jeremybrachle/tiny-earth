@@ -3,13 +3,11 @@ Unit tests for export.py Phase 0: empty planet structure.
 """
 
 import zlib
-import tempfile
-from pathlib import Path
 
 import pytest
 import yaml
 
-from export import load_config, make_empty_chunk, make_chunk, export_empty_planet
+from export import export_empty_planet, load_config, make_chunk, make_empty_chunk
 
 CHUNK_SIZE = 16
 NUM_FACES = 6
@@ -32,7 +30,7 @@ def minimal_config(tmp_path):
 def test_make_empty_chunk_decompresses_to_correct_size():
     data = make_empty_chunk(CHUNK_SIZE)
     raw = zlib.decompress(data)
-    assert len(raw) == CHUNK_SIZE ** 3
+    assert len(raw) == CHUNK_SIZE**3
 
 
 def test_make_empty_chunk_all_zeros():
@@ -44,7 +42,7 @@ def test_make_empty_chunk_all_zeros():
 def test_make_empty_chunk_is_compressed():
     data = make_empty_chunk(CHUNK_SIZE)
     # Compressed all-zeros should be much smaller than raw
-    assert len(data) < CHUNK_SIZE ** 3
+    assert len(data) < CHUNK_SIZE**3
 
 
 def test_export_creates_all_faces(minimal_config):
@@ -91,7 +89,7 @@ def test_export_chunks_are_valid_zlib(minimal_config):
     base = repo_root / "engine" / "planet" / "faces"
     for chunk_path in base.rglob("chunk_*.bin"):
         raw = zlib.decompress(chunk_path.read_bytes())
-        assert len(raw) == CHUNK_SIZE ** 3
+        assert len(raw) == CHUNK_SIZE**3
 
 
 def test_export_rejects_misaligned_resolution(tmp_path):
@@ -106,7 +104,7 @@ def test_export_rejects_misaligned_resolution(tmp_path):
 def test_make_chunk_land_correct_size():
     data = make_chunk(CHUNK_SIZE, material=1)
     raw = zlib.decompress(data)
-    assert len(raw) == CHUNK_SIZE ** 3
+    assert len(raw) == CHUNK_SIZE**3
 
 
 def test_make_chunk_land_all_ones():

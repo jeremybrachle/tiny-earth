@@ -19,22 +19,22 @@ const MAIN_MENU_SCENE := "res://scenes/main_menu.tscn"
 # in the GameSettings autoload (GameSettings.WATER_DEFAULTS), the single source of
 # truth, so the sliders, "Reset to Default", and the saved file can't drift.
 const WATER_PARAMS := [
-	["albedo_mult",  0.25, 3.0, 0.01],  # brightness
-	["roughness",    0.0,  1.0, 0.01],  # lower = sharper sun glint
-	["specular_str", 0.0,  1.0, 0.01],  # highlight strength
-	["water_alpha",  0.0,  1.0, 0.01],  # opacity
-	["emission_str", 0.0,  1.0, 0.01],  # self-glow
+	["albedo_mult", 0.25, 3.0, 0.01],  # brightness
+	["roughness", 0.0, 1.0, 0.01],  # lower = sharper sun glint
+	["specular_str", 0.0, 1.0, 0.01],  # highlight strength
+	["water_alpha", 0.0, 1.0, 0.01],  # opacity
+	["emission_str", 0.0, 1.0, 0.01],  # self-glow
 ]
 
 var _dim: ColorRect = null
-var _pages := {}          # page name -> root Control (a CenterContainer)
-var _page := ""           # currently shown page name
+var _pages := {}  # page name -> root Control (a CenterContainer)
+var _page := ""  # currently shown page name
 var _paused := false
 
 # Water tuning state (Graphics page).
-var _water_mats: Array = []          # unique water ShaderMaterials, collected on open
-var _water_sliders := {}             # param name -> HSlider
-var _water_value_labels := {}        # param name -> Label
+var _water_mats: Array = []  # unique water ShaderMaterials, collected on open
+var _water_sliders := {}  # param name -> HSlider
+var _water_value_labels := {}  # param name -> Label
 
 
 func _ready() -> void:
@@ -64,8 +64,8 @@ func _open() -> void:
 	_paused = true
 	get_tree().paused = true
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-	_set_hud_suppressed(true)   # hide the gameplay crosshair behind the menu
-	_duck_music(true)           # drop the music a touch while paused
+	_set_hud_suppressed(true)  # hide the gameplay crosshair behind the menu
+	_duck_music(true)  # drop the music a touch while paused
 	_show("main")
 	visible = true
 
@@ -255,7 +255,7 @@ func _apply_water(pname: String, value: float) -> void:
 	for m in _water_mats:
 		(m as ShaderMaterial).set_shader_parameter(pname, value)
 	_set_water_value_label(pname, value)
-	GameSettings.set_water(pname, value)   # persist to user://settings.cfg
+	GameSettings.set_water(pname, value)  # persist to user://settings.cfg
 
 
 func _set_water_value_label(pname: String, value: float) -> void:
@@ -295,7 +295,7 @@ func _on_music_volume_changed(v: float) -> void:
 func _on_quit_to_menu() -> void:
 	# Unpause before the scene change, or the freshly loaded menu inherits paused.
 	get_tree().paused = false
-	_duck_music(false)   # leave the menu's music at full level
+	_duck_music(false)  # leave the menu's music at full level
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	get_tree().change_scene_to_file(MAIN_MENU_SCENE)
 

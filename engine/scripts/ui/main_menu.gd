@@ -23,10 +23,14 @@ func _build_ui() -> void:
 
 	var box := VBoxContainer.new()
 	box.set_anchors_preset(Control.PRESET_CENTER)
-	box.anchor_left = 0.5; box.anchor_top = 0.5
-	box.anchor_right = 0.5; box.anchor_bottom = 0.5
-	box.offset_left = -160.0; box.offset_right = 160.0
-	box.offset_top = -150.0;  box.offset_bottom = 150.0
+	box.anchor_left = 0.5
+	box.anchor_top = 0.5
+	box.anchor_right = 0.5
+	box.anchor_bottom = 0.5
+	box.offset_left = -160.0
+	box.offset_right = 160.0
+	box.offset_top = -150.0
+	box.offset_bottom = 150.0
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	box.add_theme_constant_override("separation", 16)
 	add_child(box)
@@ -38,7 +42,7 @@ func _build_ui() -> void:
 	box.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "A diggable, hollow voxel Earth"
+	subtitle.text = "A diggable voxel Earth built from real geography"
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	subtitle.add_theme_color_override("font_color", Color(0.66, 0.72, 0.84))
 	box.add_child(subtitle)

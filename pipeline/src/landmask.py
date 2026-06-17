@@ -23,7 +23,7 @@ import shapely
 import yaml
 from shapely.geometry import shape
 
-from cube_sphere import EQUIANGULAR_ALPHA, face_uv_to_xyz, xyz_to_latlon
+from cube_sphere import EQUIANGULAR_ALPHA
 
 MATERIAL_LAND = 1
 MATERIAL_OCEAN = 2

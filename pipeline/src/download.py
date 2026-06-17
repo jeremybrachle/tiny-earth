@@ -11,7 +11,6 @@ ETOPO downloads to data/cache/etopo_60s.nc (~400-800 MB, cached for 365 days).
 """
 
 import argparse
-import sys
 import time
 import zipfile
 from pathlib import Path
@@ -24,10 +23,10 @@ CACHE_ZIP_REL = Path("data/cache/ne_10m_land.zip")
 CACHE_DIR_REL = Path("data/cache/ne_10m_land")
 SHP_NAME = "ne_10m_land.shp"
 
-NE_LAKES_URL      = "https://naciscdn.org/naturalearth/10m/physical/ne_10m_lakes.zip"
-LAKES_ZIP_REL     = Path("data/cache/ne_10m_lakes.zip")
-LAKES_DIR_REL     = Path("data/cache/ne_10m_lakes")
-LAKES_SHP_NAME    = "ne_10m_lakes.shp"
+NE_LAKES_URL = "https://naciscdn.org/naturalearth/10m/physical/ne_10m_lakes.zip"
+LAKES_ZIP_REL = Path("data/cache/ne_10m_lakes.zip")
+LAKES_DIR_REL = Path("data/cache/ne_10m_lakes")
+LAKES_SHP_NAME = "ne_10m_lakes.shp"
 
 ETOPO_URL = (
     "https://www.ngdc.noaa.gov/thredds/fileServer/global/ETOPO2022/60s/"
@@ -35,7 +34,7 @@ ETOPO_URL = (
 )
 ETOPO_CACHE_REL = Path("data/cache/etopo_60s.nc")
 
-KOPPEN_URL     = "https://figshare.com/ndownloader/files/12407516"
+KOPPEN_URL = "https://figshare.com/ndownloader/files/12407516"
 KOPPEN_ZIP_REL = Path("data/cache/koppen_beck2018.zip")
 KOPPEN_TIF_REL = Path("data/cache/koppen_beck2018.tif")
 
@@ -144,7 +143,11 @@ def download_etopo(config: dict, repo_root: Path) -> Path:
                 if total:
                     pct = downloaded / total * 100
                     mb = downloaded // (1024 * 1024)
-                    print(f"\r  {mb} MB / {total // (1024*1024)} MB ({pct:.1f}%)", end="", flush=True)
+                    print(
+                        f"\r  {mb} MB / {total // (1024 * 1024)} MB ({pct:.1f}%)",
+                        end="",
+                        flush=True,
+                    )
     print(f"\nSaved {downloaded // (1024 * 1024)} MB to {cache_nc}")
     return cache_nc
 
@@ -166,7 +169,7 @@ def download_koppen(config: dict, repo_root: Path) -> Path:
 
     cache_raw.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"Downloading Beck 2018 Köppen-Geiger (~30 MB) ...")
+    print("Downloading Beck 2018 Köppen-Geiger (~30 MB) ...")
     with requests.get(KOPPEN_URL, stream=True, timeout=120, allow_redirects=True) as resp:
         resp.raise_for_status()
         total = int(resp.headers.get("content-length", 0))
@@ -178,7 +181,11 @@ def download_koppen(config: dict, repo_root: Path) -> Path:
                 if total:
                     pct = downloaded / total * 100
                     mb = downloaded // (1024 * 1024)
-                    print(f"\r  {mb} MB / {total // (1024*1024)} MB ({pct:.1f}%)", end="", flush=True)
+                    print(
+                        f"\r  {mb} MB / {total // (1024 * 1024)} MB ({pct:.1f}%)",
+                        end="",
+                        flush=True,
+                    )
     print(f"\nSaved {downloaded // (1024 * 1024)} MB ({downloaded:,} bytes)")
 
     MIN_BYTES = 1024 * 1024  # anything under 1 MB is certainly not geodata
@@ -212,8 +219,12 @@ def main() -> None:
     parser.add_argument("--config", default="pipeline/config/planet.yaml")
     parser.add_argument("--root", default=".")
     parser.add_argument("--etopo", action="store_true", help="Download ETOPO elevation NetCDF")
-    parser.add_argument("--lakes", action="store_true", help="Download Natural Earth 10m lakes shapefile")
-    parser.add_argument("--koppen", action="store_true", help="Download Beck 2018 Köppen-Geiger GeoTIFF")
+    parser.add_argument(
+        "--lakes", action="store_true", help="Download Natural Earth 10m lakes shapefile"
+    )
+    parser.add_argument(
+        "--koppen", action="store_true", help="Download Beck 2018 Köppen-Geiger GeoTIFF"
+    )
     args = parser.parse_args()
 
     config = load_config(Path(args.config))

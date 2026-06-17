@@ -54,9 +54,12 @@ func read_generation_stage() -> int:
 func generate_planet(stage_id: int) -> void:
 	active_stage = stage_id
 	add_to_group("gravity_field")
-	print("PlanetGenerator: generating at stage %d (radius=%.1f, inner_r=%.1f)" % [
-		stage_id, _planet_radius, _inner_r
-	])
+	print(
+		(
+			"PlanetGenerator: generating at stage %d (radius=%.1f, inner_r=%.1f)"
+			% [stage_id, _planet_radius, _inner_r]
+		)
+	)
 
 	# Fall-through: stage N enables everything up to N.
 	if stage_id >= 0:

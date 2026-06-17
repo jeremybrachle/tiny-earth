@@ -16,6 +16,7 @@
 # (engine/planet/ baked voxel chunks ARE published on purpose so a fresh clone runs out of the box — see README. Regenerate via pipeline/src/export.py.)
 engine/.godot/
 engine/export_presets.cfg
+engine/addons/          # GUT (test framework) is vendored at test time, not committed
 **/__pycache__/
 **/*.py[cod]
 **/*.pyo

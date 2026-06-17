@@ -1,34 +1,36 @@
 # Attribution
 
-Third-party data sources and libraries used by Tiny Semantic Earth that carry attribution requirements.
+Third-party data, audio, and libraries used by Tiny Earth, with their attribution
+requirements. Only sources actually used by the current build are listed here.
 
 ---
 
 ## Data Sources
 
-### OpenStreetMap
-**© OpenStreetMap contributors**
-Licensed under the Open Database License (ODbL 1.0).
-https://www.openstreetmap.org/copyright
-
-This application uses geographic data from OpenStreetMap. The data is available under the ODbL 1.0 license. This attribution statement must appear in the running application (game UI or credits screen) — it is a legal requirement of ODbL, not a courtesy.
-
 ### Natural Earth
 Public Domain. No attribution required; credited here for transparency.
 https://www.naturalearthdata.com/
 
-### ETOPO Global Relief Model (NOAA)
-Public Domain.
+Land and lake polygons (10m physical) used to build the land/ocean mask.
+
+### ETOPO 2022 Global Relief Model (NOAA)
+Public Domain. No attribution required; credited here for transparency.
 https://www.ncei.noaa.gov/products/etopo-global-relief-model
 
-### Wikipedia Pageviews API (Wikimedia Foundation)
-Data used as a numeric signal only; no article text is reproduced.
-CC Attribution — https://creativecommons.org/licenses/by/4.0/
-https://wikitech.wikimedia.org/wiki/Analytics/AQS/Pageviews
+Elevation and bathymetry, used for terrain height and mountain classification.
 
-### WWF Terrestrial Ecoregions
-Non-commercial use with attribution.
-https://www.worldwildlife.org/publications/terrestrial-ecoregions-of-the-world
+### Köppen-Geiger Climate Classification — Beck et al. 2018
+**CC BY 4.0 — attribution required.**
+https://creativecommons.org/licenses/by/4.0/
+
+The biome colours are classified from the Beck et al. 2018 present-day
+Köppen-Geiger 1 km raster. Attribution per CC BY 4.0:
+
+> Beck, H.E., Zimmermann, N.E., McVicar, T.R., Vergopolan, N., Berg, A., & Wood, E.F.
+> (2018). Present and future Köppen-Geiger climate classification maps at 1-km
+> resolution. *Scientific Data* 5, 180214. https://doi.org/10.1038/sdata.2018.214
+
+Dataset (figshare): https://figshare.com/ndownloader/files/12407516
 
 ---
 
@@ -40,7 +42,7 @@ Public Domain. No attribution required; credited here as a courtesy.
 - **Recording:** Public-domain recording sourced via Musopen / IMSLP.
 - https://musopen.org/ · https://imslp.org/
 
-Used as the looping ambient background track (`engine/audio/clair_de_lune.mp3`).
+The looping ambient background track (`engine/audio/clair_de_lune.mp3`).
 
 ---
 
@@ -53,18 +55,22 @@ https://godotengine.org/
 ### josebasierra/voxel-planets
 MIT License. Copyright (c) Jose Basierra.
 https://github.com/josebasierra/voxel-planets
-Used as an architectural reference only. Code was not directly ported — this project uses Godot (not Unity). Attribution provided per MIT license terms.
+Used as an architectural reference only — no code was directly ported (this project
+uses Godot, not Unity). Attribution provided per MIT license terms.
 
-### GDAL
-MIT License.
-https://gdal.org/
+### Python pipeline libraries
+Credited as a courtesy; each is used as an installed dependency, not redistributed.
 
-### Rasterio
-BSD-3-Clause License.
-https://rasterio.readthedocs.io/
-
-### GeoPandas
-BSD-3-Clause License.
-https://geopandas.org/
+| Library | License |
+|---|---|
+| NumPy | BSD-3-Clause |
+| SciPy | BSD-3-Clause |
+| Shapely | BSD-3-Clause |
+| Rasterio | BSD-3-Clause |
+| pyshp (PyShp) | MIT |
+| netCDF4 | MIT |
+| Pillow | HPND (MIT-style) |
+| PyYAML | MIT |
+| Requests | Apache-2.0 |
 
 See [LICENSES.md](LICENSES.md) for full license texts.

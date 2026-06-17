@@ -1,0 +1,60 @@
+name: GDScript
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  GODOT_VERSION: "4.6.3"
+  GUT_VERSION: "v9.6.0"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install gdtoolkit
+        run: python -m pip install "gdtoolkit==4.*"
+
+      - name: Lint (gdlint)
+        run: gdlint engine/scripts
+
+      - name: Format check (gdformat)
+        run: gdformat --check engine/scripts
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          use-dotnet: false
+
+      - name: Vendor GUT (Godot Unit Test)
+        run: |
+          git clone --depth 1 --branch "${GUT_VERSION}" https://github.com/bitwes/Gut.git /tmp/gut
+          mkdir -p engine/addons
+          cp -r /tmp/gut/addons/gut engine/addons/gut
+
+      - name: Import project resources
+        # Run twice: headless Godot may only register GUT's global class_names
+        # (GutTest, GutMain, …) on the second import pass.
+        run: |
+          godot --headless --path engine --import || true
+          godot --headless --path engine --import || true
+
+      - name: Run GUT tests
+        run: >
+          godot --headless --path engine
+          -s res://addons/gut/gut_cmdln.gd
+          -gdir=res://test -gprefix=test_ -gsuffix=.gd -gexit

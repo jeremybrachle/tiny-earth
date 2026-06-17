@@ -25,17 +25,17 @@ from pathlib import Path
 
 import yaml
 
-MATERIAL_AIR      = 0
-MATERIAL_LAND     = 1
-MATERIAL_OCEAN    = 2
-MATERIAL_ROCK     = 9    # solid subsurface rock filling the crust below the biome surface
-MATERIAL_SEAFLOOR = 10   # rocky/sandy ocean floor exposed below water column
+MATERIAL_AIR = 0
+MATERIAL_LAND = 1
+MATERIAL_OCEAN = 2
+MATERIAL_ROCK = 9  # solid subsurface rock filling the crust below the biome surface
+MATERIAL_SEAFLOOR = 10  # rocky/sandy ocean floor exposed below water column
 NUM_FACES = 6
 
-LANDMASK_CACHE_REL    = Path("data/cache/landmask.npy")
-BIOMES_CACHE_REL      = Path("data/cache/biomes.npy")
-ELEVATION_CACHE_REL   = Path("data/cache/elevation.npy")
-BATHYMETRY_CACHE_REL  = Path("data/cache/bathymetry.npy")
+LANDMASK_CACHE_REL = Path("data/cache/landmask.npy")
+BIOMES_CACHE_REL = Path("data/cache/biomes.npy")
+ELEVATION_CACHE_REL = Path("data/cache/elevation.npy")
+BATHYMETRY_CACHE_REL = Path("data/cache/bathymetry.npy")
 
 
 def load_config(config_path: Path) -> dict:
@@ -70,7 +70,7 @@ def write_planet_config(config: dict, repo_root: Path) -> None:
 
 def make_chunk(chunk_size: int, material: int = MATERIAL_AIR) -> bytes:
     """Return a zlib-compressed chunk filled with the given material ID."""
-    raw = bytes([material] * chunk_size ** 3)
+    raw = bytes([material] * chunk_size**3)
     return zlib.compress(raw, level=6)
 
 
@@ -111,7 +111,9 @@ def export_empty_planet(config: dict, repo_root: Path, solid: bool = False) -> N
     )
 
 
-def export_landmask_planet(config: dict, repo_root: Path, landmask, elevation=None, bathymetry=None) -> None:
+def export_landmask_planet(
+    config: dict, repo_root: Path, landmask, elevation=None, bathymetry=None
+) -> None:
     """Write chunk files with per-voxel Land/Ocean material from a landmask array.
 
     landmask:   (6, resolution, resolution) uint8 — material per surface voxel
@@ -161,7 +163,7 @@ def export_landmask_planet(config: dict, repo_root: Path, landmask, elevation=No
         face_dir.mkdir(parents=True, exist_ok=True)
         for cx in range(chunks_per_edge):
             for cy in range(chunks_per_edge):
-                raw = bytearray(chunk_size ** 3)  # all Air by default
+                raw = bytearray(chunk_size**3)  # all Air by default
                 for lc in range(chunk_size):
                     for lr in range(chunk_size):
                         col = cx * chunk_size + lc
@@ -183,9 +185,7 @@ def export_landmask_planet(config: dict, repo_root: Path, landmask, elevation=No
                                 idx = lc + chunk_size * (lr + chunk_size * depth)
                                 raw[idx] = mat
 
-                (face_dir / f"chunk_{cx}_{cy}.bin").write_bytes(
-                    zlib.compress(bytes(raw), level=6)
-                )
+                (face_dir / f"chunk_{cx}_{cy}.bin").write_bytes(zlib.compress(bytes(raw), level=6))
                 total += 1
 
     expected = NUM_FACES * chunks_per_edge * chunks_per_edge
@@ -238,7 +238,7 @@ def main() -> None:
         "--bathymetry",
         action="store_true",
         help="Add seafloor + water-column depth to ocean tiles using data/cache/bathymetry.npy "
-             "(requires --elevation; run elevation.py first to generate the cache)",
+        "(requires --elevation; run elevation.py first to generate the cache)",
     )
     args = parser.parse_args()
 
@@ -296,11 +296,16 @@ def main() -> None:
             bath_path = repo_root / BATHYMETRY_CACHE_REL
             if not bath_path.exists():
                 print(f"Error: bathymetry cache not found at {bath_path}", file=sys.stderr)
-                print("Run: python pipeline/src/elevation.py  (it writes both caches)", file=sys.stderr)
+                print(
+                    "Run: python pipeline/src/elevation.py  (it writes both caches)",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             bathymetry = np.load(bath_path)
 
-        export_landmask_planet(config, repo_root, landmask, elevation=elevation, bathymetry=bathymetry)
+        export_landmask_planet(
+            config, repo_root, landmask, elevation=elevation, bathymetry=bathymetry
+        )
     else:
         export_empty_planet(config, repo_root, solid=args.solid)
 

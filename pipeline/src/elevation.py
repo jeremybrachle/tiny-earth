@@ -26,14 +26,14 @@ import yaml
 from cube_sphere import EQUIANGULAR_ALPHA
 from landmask import MIRRORED_FACES
 
-MAX_ELEV_M = 8849      # Everest summit (meters)
-VOXEL_LAYERS = 8       # maximum extra layers above surface
-MAX_OCEAN_M = 11000    # Challenger Deep / Mariana Trench (meters) — ocean depth reference
-MAX_BATH_LAYERS = 12   # cap ocean water column at 12 voxels (leaves seafloor + rock
-                       # crust within the 16-deep inner shell). Deepest trenches reach
-                       # this; shelves stay 1–2. Tune for trench drama vs. crust thickness.
+MAX_ELEV_M = 8849  # Everest summit (meters)
+VOXEL_LAYERS = 8  # maximum extra layers above surface
+MAX_OCEAN_M = 11000  # Challenger Deep / Mariana Trench (meters) — ocean depth reference
+MAX_BATH_LAYERS = 12  # cap ocean water column at 12 voxels (leaves seafloor + rock
+# crust within the 16-deep inner shell). Deepest trenches reach
+# this; shelves stay 1–2. Tune for trench drama vs. crust thickness.
 
-CACHE_REL      = Path("data/cache/elevation.npy")
+CACHE_REL = Path("data/cache/elevation.npy")
 BATH_CACHE_REL = Path("data/cache/bathymetry.npy")
 DEFAULT_NC_REL = Path("data/cache/etopo_60s.nc")
 
@@ -53,24 +53,26 @@ def load_etopo(nc_path: Path) -> tuple:
     """
     try:
         from scipy.io import netcdf_file
+
         with netcdf_file(str(nc_path), "r", mmap=False) as f:
             lats = np.array(f.variables["lat"][:], dtype=np.float32)
             lons = np.array(f.variables["lon"][:], dtype=np.float32)
-            z    = np.array(f.variables["z"][:],   dtype=np.float32)
+            z = np.array(f.variables["z"][:], dtype=np.float32)
         print("Loaded ETOPO via scipy")
     except Exception:
         import netCDF4
+
         ds = netCDF4.Dataset(str(nc_path))
         lats = np.array(ds.variables["lat"][:], dtype=np.float32)
         lons = np.array(ds.variables["lon"][:], dtype=np.float32)
-        z    = np.array(ds.variables["z"][:],   dtype=np.float32)
+        z = np.array(ds.variables["z"][:], dtype=np.float32)
         ds.close()
         print("Loaded ETOPO via netCDF4")
 
     # Ensure lats are ascending for np.searchsorted
     if lats[0] > lats[-1]:
         lats = lats[::-1]
-        z    = z[::-1, :]
+        z = z[::-1, :]
 
     return lats, lons, z
 
@@ -193,7 +195,7 @@ def rasterize(nc_path: Path, config: dict, repo_root: Path) -> np.ndarray:
     """
     resolution = config["planet"]["resolution"]
     cache_path = repo_root / CACHE_REL
-    bath_path  = repo_root / BATH_CACHE_REL
+    bath_path = repo_root / BATH_CACHE_REL
 
     if (
         cache_path.exists()
@@ -217,7 +219,7 @@ def rasterize(nc_path: Path, config: dict, repo_root: Path) -> np.ndarray:
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     np.save(cache_path, elev_grid)
-    np.save(bath_path,  bath_grid)
+    np.save(bath_path, bath_grid)
 
     nonzero = int((elev_grid > 0).sum())
     total = 6 * resolution * resolution
