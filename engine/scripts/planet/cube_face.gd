@@ -27,7 +27,6 @@ const CHUNK_SIZE := 16
 const EQUIANGULAR_ALPHA := PI / 4.0
 var planet_radius: float = 256.0  # set by VoxelPlanet before add_child; read from planet_config.json
 
-
 # Material ID → vertex color (matches pipeline/src/biomes.py constants)
 const MAT_COLORS := {
 	1: Color(0.25, 0.55, 0.20),  # Land fallback
@@ -39,20 +38,20 @@ const MAT_COLORS := {
 	7: Color(0.10, 0.48, 0.12),  # Tropical rainforest
 	8: Color(0.68, 0.62, 0.22),  # Savanna/grassland
 	9: Color(0.52, 0.48, 0.44),  # Mountain/Rock
-	10: Color(0.28, 0.22, 0.16), # Seafloor (sandy/rocky ocean floor)
+	10: Color(0.28, 0.22, 0.16),  # Seafloor (sandy/rocky ocean floor)
 }
 
 @export var face_id: int = 0
 @export var chunks_per_edge: int = 16
 
-var _chunk_data  := {}   # int key (cx*CPE + cy) → PackedByteArray (raw voxels)
+var _chunk_data := {}  # int key (cx*CPE + cy) → PackedByteArray (raw voxels)
 var _mat: Material = null
 var _water_mat: Material = null
-var _chunk_insts := {}       # int key → MeshInstance3D
-var _water_chunk_insts := {} # int key → MeshInstance3D
+var _chunk_insts := {}  # int key → MeshInstance3D
+var _water_chunk_insts := {}  # int key → MeshInstance3D
 
-var _face_res       := 0
-var _chunk_col_shapes := {}   # int key → CollisionShape3D, one per chunk
+var _face_res := 0
+var _chunk_col_shapes := {}  # int key → CollisionShape3D, one per chunk
 
 # --- Water gravity settling (source-block, full-voxel) ---------------------
 # Mirror of the inner shell's settling, with the OUTWARD depth convention: here
@@ -61,22 +60,23 @@ var _chunk_col_shapes := {}   # int key → CollisionShape3D, one per chunk
 # off to the inner shell (depth 0) so coastal pools drain into the subsurface;
 # otherwise it spreads sideways into same-level air. Never flows upward. Dig
 # events seed the frontier; a Timer drains it so water creeps in over time.
-const FLOW_HZ       := 10.0  # settling ticks per second
-const FLOW_PER_TICK := 64    # max cells processed per tick (per face)
+const FLOW_HZ := 10.0  # settling ticks per second
+const FLOW_PER_TICK := 64  # max cells processed per tick (per face)
 var _flow_timer: Timer = null
-var _active_water := {}        # gk → [c, r, d]  (membership + payload)
-var _active_order : Array = [] # FIFO of gk for round-robin draining
+var _active_water := {}  # gk → [c, r, d]  (membership + payload)
+var _active_order: Array = []  # FIFO of gk for round-robin draining
 
 
 func _ready() -> void:
 	pass  # The build is driven externally by VoxelPlanet.build_planet_async() so
-		  # the planet can assemble progressively across frames (loading screen).
+	# the planet can assemble progressively across frames (loading screen).
 
 
 # --- Staged build API (driven by VoxelPlanet's orchestrator) ---------------
 # _build_face() was split into init / load / build-chunk / seam steps so the
 # orchestrator can interleave them across frames (await between batches),
 # rendering the planet live instead of blocking the main thread before frame 1.
+
 
 func init_face() -> void:
 	_mat = ShaderMaterial.new()
@@ -139,7 +139,8 @@ func rebuild_seam_edges() -> void:
 	var seen := {}
 	for i in chunks_per_edge:
 		for c in [[0, i], [last, i], [i, 0], [i, last]]:
-			var cx: int = c[0];  var cy: int = c[1]
+			var cx: int = c[0]
+			var cy: int = c[1]
 			var key: int = cx * chunks_per_edge + cy
 			if seen.has(key) or not _chunk_data.has(key):
 				continue
@@ -181,10 +182,10 @@ func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, dep
 	# fallbacks below therefore bias toward the clean culled look when the
 	# neighbour can't be resolved. Sample the cell CENTRE (+0.5), not the corner,
 	# which lands on the ambiguous seam line.
-	var u    := (float(col) + 0.5) / float(_face_res)
-	var v    := (float(row) + 0.5) / float(_face_res)
+	var u := (float(col) + 0.5) / float(_face_res)
+	var v := (float(row) + 0.5) / float(_face_res)
 	var unit := face_uv_to_unit(face_id, u, v)
-	var r    := unit_to_face_col_row(unit, _face_res)
+	var r := unit_to_face_col_row(unit, _face_res)
 	var nface := int(r[0])
 	if nface == face_id:
 		# Degenerate: boundary pixel projected back to same face. Nudge inward.
@@ -199,8 +200,10 @@ func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, dep
 	var nb := get_parent().get_node_or_null("CubeFace_%d" % nface) as CubeFace
 	if nb == null or not is_instance_valid(nb):
 		return true
-	var ncol := int(r[1]);  var nrow := int(r[2])
-	var ncx  := ncol / CHUNK_SIZE;  var ncy := nrow / CHUNK_SIZE
+	var ncol := int(r[1])
+	var nrow := int(r[2])
+	var ncx := ncol / CHUNK_SIZE
+	var ncy := nrow / CHUNK_SIZE
 	var nkey := ncx * chunks_per_edge + ncy
 	if not nb._chunk_data.has(nkey):
 		return true
@@ -210,7 +213,16 @@ func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, dep
 
 # A radial (top/bottom) voxel face at radius r over one column cell. `outward`
 # orients the normal toward the surface (top) or toward the centre (bottom).
-func _emit_radial_face(st: SurfaceTool, u0: float, v0: float, u1: float, v1: float, r: float, color: Color, outward: bool) -> void:
+func _emit_radial_face(
+	st: SurfaceTool,
+	u0: float,
+	v0: float,
+	u1: float,
+	v1: float,
+	r: float,
+	color: Color,
+	outward: bool
+) -> void:
 	var p00 := face_uv_to_unit(face_id, u0, v0) * r
 	var p10 := face_uv_to_unit(face_id, u1, v0) * r
 	var p01 := face_uv_to_unit(face_id, u0, v1) * r
@@ -220,64 +232,109 @@ func _emit_radial_face(st: SurfaceTool, u0: float, v0: float, u1: float, v1: flo
 		normal = -normal
 	st.set_color(color)
 	if (p10 - p00).cross(p11 - p00).dot(normal) > 0.0:
-		st.set_uv(Vector2(0,0)); st.add_vertex(p00)
-		st.set_uv(Vector2(1,0)); st.add_vertex(p10)
-		st.set_uv(Vector2(1,1)); st.add_vertex(p11)
-		st.set_uv(Vector2(0,0)); st.add_vertex(p00)
-		st.set_uv(Vector2(1,1)); st.add_vertex(p11)
-		st.set_uv(Vector2(0,1)); st.add_vertex(p01)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(p00)
+		st.set_uv(Vector2(1, 0))
+		st.add_vertex(p10)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(p11)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(p00)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(p11)
+		st.set_uv(Vector2(0, 1))
+		st.add_vertex(p01)
 	else:
-		st.set_uv(Vector2(0,0)); st.add_vertex(p00)
-		st.set_uv(Vector2(1,1)); st.add_vertex(p11)
-		st.set_uv(Vector2(1,0)); st.add_vertex(p10)
-		st.set_uv(Vector2(0,0)); st.add_vertex(p00)
-		st.set_uv(Vector2(0,1)); st.add_vertex(p01)
-		st.set_uv(Vector2(1,1)); st.add_vertex(p11)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(p00)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(p11)
+		st.set_uv(Vector2(1, 0))
+		st.add_vertex(p10)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(p00)
+		st.set_uv(Vector2(0, 1))
+		st.add_vertex(p01)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(p11)
 
 
 # A lateral voxel face toward `dir`, spanning r_in (inward side) to r_out (outward
 # side). Dot-product winding points the normal into the open neighbour.
-func _emit_side_face(st: SurfaceTool, col0: int, row0: int, dir: Vector2i, r_in: float, r_out: float, res: float, eps: float, color: Color) -> void:
-	var u_a: float; var v_a: float; var u_b: float; var v_b: float
+func _emit_side_face(
+	st: SurfaceTool,
+	col0: int,
+	row0: int,
+	dir: Vector2i,
+	r_in: float,
+	r_out: float,
+	res: float,
+	eps: float,
+	color: Color
+) -> void:
+	var u_a: float
+	var v_a: float
+	var u_b: float
+	var v_b: float
 	if dir.x == 1:
-		u_a = (col0 + 1) / res;  v_a = row0        / res
-		u_b = (col0 + 1) / res;  v_b = (row0 + 1)  / res
+		u_a = (col0 + 1) / res
+		v_a = row0 / res
+		u_b = (col0 + 1) / res
+		v_b = (row0 + 1) / res
 	elif dir.x == -1:
-		u_a = col0       / res;  v_a = (row0 + 1)  / res
-		u_b = col0       / res;  v_b = row0         / res
+		u_a = col0 / res
+		v_a = (row0 + 1) / res
+		u_b = col0 / res
+		v_b = row0 / res
 	elif dir.y == 1:
-		u_a = (col0 + 1) / res;  v_a = (row0 + 1)  / res
-		u_b = col0       / res;  v_b = (row0 + 1)  / res
+		u_a = (col0 + 1) / res
+		v_a = (row0 + 1) / res
+		u_b = col0 / res
+		v_b = (row0 + 1) / res
 	else:
-		u_a = col0       / res;  v_a = row0         / res
-		u_b = (col0 + 1) / res;  v_b = row0         / res
+		u_a = col0 / res
+		v_a = row0 / res
+		u_b = (col0 + 1) / res
+		v_b = row0 / res
 
-	var pa_top  := face_uv_to_unit(face_id, u_a, v_a) * r_out
-	var pb_top  := face_uv_to_unit(face_id, u_b, v_b) * r_out
+	var pa_top := face_uv_to_unit(face_id, u_a, v_a) * r_out
+	var pb_top := face_uv_to_unit(face_id, u_b, v_b) * r_out
 	var pa_base := face_uv_to_unit(face_id, u_a, v_a) * r_in
 	var pb_base := face_uv_to_unit(face_id, u_b, v_b) * r_in
 
-	var u_mid  := (u_a + u_b) * 0.5
-	var v_mid  := (v_a + v_b) * 0.5
+	var u_mid := (u_a + u_b) * 0.5
+	var v_mid := (v_a + v_b) * 0.5
 	var mid_pt := face_uv_to_unit(face_id, u_mid, v_mid)
 	var out_pt := face_uv_to_unit(face_id, u_mid + dir.x * eps, v_mid + dir.y * eps)
 	var expected_out := out_pt - mid_pt
 
 	st.set_color(color)
 	if (pa_top - pa_base).cross(pb_top - pa_base).dot(expected_out) > 0.0:
-		st.set_uv(Vector2(0,0)); st.add_vertex(pa_base)
-		st.set_uv(Vector2(0,1)); st.add_vertex(pa_top)
-		st.set_uv(Vector2(1,1)); st.add_vertex(pb_top)
-		st.set_uv(Vector2(0,0)); st.add_vertex(pa_base)
-		st.set_uv(Vector2(1,1)); st.add_vertex(pb_top)
-		st.set_uv(Vector2(1,0)); st.add_vertex(pb_base)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(pa_base)
+		st.set_uv(Vector2(0, 1))
+		st.add_vertex(pa_top)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(pb_top)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(pa_base)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(pb_top)
+		st.set_uv(Vector2(1, 0))
+		st.add_vertex(pb_base)
 	else:
-		st.set_uv(Vector2(0,0)); st.add_vertex(pa_base)
-		st.set_uv(Vector2(1,1)); st.add_vertex(pb_top)
-		st.set_uv(Vector2(0,1)); st.add_vertex(pa_top)
-		st.set_uv(Vector2(0,0)); st.add_vertex(pa_base)
-		st.set_uv(Vector2(1,0)); st.add_vertex(pb_base)
-		st.set_uv(Vector2(1,1)); st.add_vertex(pb_top)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(pa_base)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(pb_top)
+		st.set_uv(Vector2(0, 1))
+		st.add_vertex(pa_top)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(pa_base)
+		st.set_uv(Vector2(1, 0))
+		st.add_vertex(pb_base)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(pb_top)
 
 
 # True per-voxel mesher: every solid voxel emits exactly the faces exposed to an
@@ -287,9 +344,9 @@ func _emit_side_face(st: SurfaceTool, col0: int, row0: int, dir: Vector2i, r_in:
 # never diverge. Ocean (mat 2) is skipped here; ocean tops are a separate water
 # mesh, and _is_solid_at treats water as open so coast faces still show.
 func _add_chunk_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int, cy: int) -> void:
-	var res        := float(_face_res)
+	var res := float(_face_res)
 	var voxel_size := planet_radius / res
-	var eps        := 0.5 / res
+	var eps := 0.5 / res
 
 	for lc in CHUNK_SIZE:
 		for lr in CHUNK_SIZE:
@@ -305,8 +362,8 @@ func _add_chunk_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int, cy: 
 					continue
 
 				var color: Color = MAT_COLORS.get(m, Color.WHITE)
-				var r_out := planet_radius + float(depth) * voxel_size          # outward (top)
-				var r_in  := planet_radius + (float(depth) - 1.0) * voxel_size  # inward (bottom)
+				var r_out := planet_radius + float(depth) * voxel_size  # outward (top)
+				var r_in := planet_radius + (float(depth) - 1.0) * voxel_size  # inward (bottom)
 
 				# Outward (top) face — exposed if the voxel just outward is open.
 				if not _is_solid_at(cx, cy, data, lc, lr, depth + 1):
@@ -319,7 +376,9 @@ func _add_chunk_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int, cy: 
 				# Four lateral faces — exposed where the side neighbour is open.
 				for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 					if not _is_solid_at(cx, cy, data, lc + dir.x, lr + dir.y, depth):
-						var side_color := Color(color.r * 0.65, color.g * 0.65, color.b * 0.65, color.a)
+						var side_color := Color(
+							color.r * 0.65, color.g * 0.65, color.b * 0.65, color.a
+						)
 						_emit_side_face(st, col0, row0, dir, r_in, r_out, res, eps, side_color)
 
 
@@ -355,47 +414,59 @@ func _build_chunk_collision(cx: int, cy: int) -> void:
 # Ocean tops: one transparent quad per surface water voxel. Water is non-solid,
 # so it is drawn here (not in the opaque per-voxel mesh) and has no collision.
 func _add_ocean_tops_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int, cy: int) -> void:
-	var res        := float(_face_res)
+	var res := float(_face_res)
 	var voxel_size := planet_radius / res
 
 	for lc in CHUNK_SIZE:
 		for lr in CHUNK_SIZE:
 			var top_depth := -1
-			var top_mat   := 0
+			var top_mat := 0
 			for depth in CHUNK_SIZE:
 				var m := ChunkLoader.voxel(data, lc, lr, depth)
 				if m == 0:
 					break
 				top_depth = depth
-				top_mat   = m
+				top_mat = m
 			if top_depth < 0 or top_mat != 2:
 				continue
 
 			var col0 := cx * CHUNK_SIZE + lc
 			var row0 := cy * CHUNK_SIZE + lr
-			var r    := planet_radius + top_depth * voxel_size
+			var r := planet_radius + top_depth * voxel_size
 
 			var color: Color = MAT_COLORS.get(2, Color.WHITE)
-			var p00 := face_uv_to_unit(face_id,  col0      / res,  row0      / res) * r
-			var p10 := face_uv_to_unit(face_id, (col0 + 1) / res,  row0      / res) * r
-			var p01 := face_uv_to_unit(face_id,  col0      / res, (row0 + 1) / res) * r
+			var p00 := face_uv_to_unit(face_id, col0 / res, row0 / res) * r
+			var p10 := face_uv_to_unit(face_id, (col0 + 1) / res, row0 / res) * r
+			var p01 := face_uv_to_unit(face_id, col0 / res, (row0 + 1) / res) * r
 			var p11 := face_uv_to_unit(face_id, (col0 + 1) / res, (row0 + 1) / res) * r
 
 			st.set_color(color)
 			if face_id == 2 or face_id == 3:
-				st.set_uv(Vector2(0,0)); st.add_vertex(p00)
-				st.set_uv(Vector2(1,1)); st.add_vertex(p11)
-				st.set_uv(Vector2(1,0)); st.add_vertex(p10)
-				st.set_uv(Vector2(0,0)); st.add_vertex(p00)
-				st.set_uv(Vector2(0,1)); st.add_vertex(p01)
-				st.set_uv(Vector2(1,1)); st.add_vertex(p11)
+				st.set_uv(Vector2(0, 0))
+				st.add_vertex(p00)
+				st.set_uv(Vector2(1, 1))
+				st.add_vertex(p11)
+				st.set_uv(Vector2(1, 0))
+				st.add_vertex(p10)
+				st.set_uv(Vector2(0, 0))
+				st.add_vertex(p00)
+				st.set_uv(Vector2(0, 1))
+				st.add_vertex(p01)
+				st.set_uv(Vector2(1, 1))
+				st.add_vertex(p11)
 			else:
-				st.set_uv(Vector2(0,0)); st.add_vertex(p00)
-				st.set_uv(Vector2(1,0)); st.add_vertex(p10)
-				st.set_uv(Vector2(1,1)); st.add_vertex(p11)
-				st.set_uv(Vector2(0,0)); st.add_vertex(p00)
-				st.set_uv(Vector2(1,1)); st.add_vertex(p11)
-				st.set_uv(Vector2(0,1)); st.add_vertex(p01)
+				st.set_uv(Vector2(0, 0))
+				st.add_vertex(p00)
+				st.set_uv(Vector2(1, 0))
+				st.add_vertex(p10)
+				st.set_uv(Vector2(1, 1))
+				st.add_vertex(p11)
+				st.set_uv(Vector2(0, 0))
+				st.add_vertex(p00)
+				st.set_uv(Vector2(1, 1))
+				st.add_vertex(p11)
+				st.set_uv(Vector2(0, 1))
+				st.add_vertex(p01)
 
 
 func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
@@ -451,8 +522,8 @@ func set_water_visible(v: bool) -> void:
 func get_top_mat(col: int, row: int) -> int:
 	if col < 0 or col >= _face_res or row < 0 or row >= _face_res:
 		return 0
-	var cx  := col / CHUNK_SIZE
-	var cy  := row / CHUNK_SIZE
+	var cx := col / CHUNK_SIZE
+	var cy := row / CHUNK_SIZE
 	var key := cx * chunks_per_edge + cy
 	if not _chunk_data.has(key):
 		return 0
@@ -474,8 +545,8 @@ func mat_at(col: int, row: int, depth: int) -> int:
 		return 0
 	if depth < 0 or depth >= CHUNK_SIZE:
 		return 0
-	var cx  := col / CHUNK_SIZE
-	var cy  := row / CHUNK_SIZE
+	var cx := col / CHUNK_SIZE
+	var cy := row / CHUNK_SIZE
 	var key := cx * chunks_per_edge + cy
 	if not _chunk_data.has(key):
 		return 0
@@ -502,8 +573,10 @@ func _enqueue_water(c: int, r: int, d: int) -> void:
 # Write mat-2 into the in-face voxel (c, r, d) and record its chunk as dirty.
 # Returns false if the chunk isn't loaded. Caller is responsible for bounds.
 func _set_water(c: int, r: int, d: int, dirty: Dictionary) -> bool:
-	var cx: int = c / CHUNK_SIZE;  var cy: int = r / CHUNK_SIZE
-	var lc: int = c % CHUNK_SIZE;  var lr: int = r % CHUNK_SIZE
+	var cx: int = c / CHUNK_SIZE
+	var cy: int = r / CHUNK_SIZE
+	var lc: int = c % CHUNK_SIZE
+	var lr: int = r % CHUNK_SIZE
 	var key: int = cx * chunks_per_edge + cy
 	if not _chunk_data.has(key):
 		return false
@@ -596,7 +669,8 @@ func _cross_seam_water(nc: int, nr: int, d: int) -> bool:
 	var nb := get_parent().get_node_or_null("CubeFace_%d" % nface) as CubeFace
 	if nb == null or not is_instance_valid(nb):
 		return false
-	var ncol: int = int(rr[1]);  var nrow: int = int(rr[2])
+	var ncol: int = int(rr[1])
+	var nrow: int = int(rr[2])
 	if nb.mat_at(ncol, nrow, d) != 0:
 		return false
 	nb.seed_external_water(ncol, nrow, d)
@@ -608,10 +682,17 @@ func _cross_seam_water(nc: int, nr: int, d: int) -> bool:
 # the depth-above cell (water falls in), same-level/below water, and seam
 # neighbours (a coastal dig may border ocean on an adjacent face).
 func _seed_flow_around(col: int, row: int, depth: int) -> void:
-	for n in [[col + 1, row, depth], [col - 1, row, depth],
-			  [col, row + 1, depth], [col, row - 1, depth],
-			  [col, row, depth - 1], [col, row, depth + 1]]:
-		var nc: int = n[0];  var nr: int = n[1];  var nd: int = n[2]
+	for n in [
+		[col + 1, row, depth],
+		[col - 1, row, depth],
+		[col, row + 1, depth],
+		[col, row - 1, depth],
+		[col, row, depth - 1],
+		[col, row, depth + 1]
+	]:
+		var nc: int = n[0]
+		var nr: int = n[1]
+		var nd: int = n[2]
 		if nc >= 0 and nc < _face_res and nr >= 0 and nr < _face_res:
 			if mat_at(nc, nr, nd) == 2:
 				_enqueue_water(nc, nr, nd)
@@ -627,7 +708,8 @@ func _seed_flow_around(col: int, row: int, depth: int) -> void:
 			var nb := get_parent().get_node_or_null("CubeFace_%d" % nface) as CubeFace
 			if nb == null or not is_instance_valid(nb):
 				continue
-			var ncol: int = int(rr[1]);  var nrow: int = int(rr[2])
+			var ncol: int = int(rr[1])
+			var nrow: int = int(rr[2])
 			if nb.mat_at(ncol, nrow, nd) == 2:
 				nb._enqueue_water(ncol, nrow, nd)
 
@@ -647,7 +729,9 @@ func _on_flow_tick() -> void:
 		_active_water.erase(gk)
 		if payload == null:
 			continue
-		var c: int = payload[0];  var r: int = payload[1];  var d: int = payload[2]
+		var c: int = payload[0]
+		var r: int = payload[1]
+		var d: int = payload[2]
 		if _settle_one(c, r, d, dirty):
 			_enqueue_water(c, r, d)  # still a source — keep feeding next tick
 		processed += 1
@@ -678,8 +762,10 @@ func _rebuild_seam_neighbors(col: int, row: int) -> void:
 		var nb := get_parent().get_node_or_null("CubeFace_%d" % nface) as CubeFace
 		if nb == null or not is_instance_valid(nb):
 			continue
-		var nc: int = int(r[1]);  var nr: int = int(r[2])
-		var ncx: int = nc / CHUNK_SIZE;  var ncy: int = nr / CHUNK_SIZE
+		var nc: int = int(r[1])
+		var nr: int = int(r[2])
+		var ncx: int = nc / CHUNK_SIZE
+		var ncy: int = nr / CHUNK_SIZE
 		var nkey: int = ncx * nb.chunks_per_edge + ncy
 		if nb._chunk_data.has(nkey):
 			nb._rebuild_chunk(ncx, ncy, nkey)
@@ -688,10 +774,10 @@ func _rebuild_seam_neighbors(col: int, row: int) -> void:
 
 # Remove a specific voxel by column + depth. Used by aimed digging.
 func remove_voxel(col: int, row: int, depth: int) -> bool:
-	var cx  := col / CHUNK_SIZE
-	var cy  := row / CHUNK_SIZE
-	var lc  := col % CHUNK_SIZE
-	var lr  := row % CHUNK_SIZE
+	var cx := col / CHUNK_SIZE
+	var cy := row / CHUNK_SIZE
+	var lc := col % CHUNK_SIZE
+	var lr := row % CHUNK_SIZE
 	var key := cx * chunks_per_edge + cy
 	if not _chunk_data.has(key):
 		return false
@@ -707,7 +793,8 @@ func remove_voxel(col: int, row: int, depth: int) -> bool:
 	_build_chunk_collision.call_deferred(cx, cy)
 	_rebuild_chunk(cx, cy, key)
 	for nb in [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]:
-		var nx: int = nb[0];  var ny: int = nb[1]
+		var nx: int = nb[0]
+		var ny: int = nb[1]
 		if nx < 0 or nx >= chunks_per_edge or ny < 0 or ny >= chunks_per_edge:
 			continue
 		if nx == cx and ny == cy:
@@ -723,10 +810,10 @@ func remove_voxel(col: int, row: int, depth: int) -> bool:
 # the player is standing on. Returns false when the column is already empty, so
 # the caller can chain the dig into the inner shell.
 func remove_top_voxel(col: int, row: int) -> bool:
-	var cx  := col / CHUNK_SIZE
-	var cy  := row / CHUNK_SIZE
-	var lc  := col % CHUNK_SIZE
-	var lr  := row % CHUNK_SIZE
+	var cx := col / CHUNK_SIZE
+	var cy := row / CHUNK_SIZE
+	var lc := col % CHUNK_SIZE
+	var lr := row % CHUNK_SIZE
 	var key := cx * chunks_per_edge + cy
 	if not _chunk_data.has(key):
 		return false
@@ -777,12 +864,18 @@ static func face_uv_to_unit(face: int, u: float, v: float) -> Vector3:
 	t = tan(t * EQUIANGULAR_ALPHA) / tan(EQUIANGULAR_ALPHA)
 	var raw: Vector3
 	match face:
-		0: raw = Vector3( 1.0,  s,    t)
-		1: raw = Vector3(-1.0, -s,    t)
-		2: raw = Vector3( s,    1.0,  t)
-		3: raw = Vector3(-s,   -1.0,  t)
-		4: raw = Vector3( s,    t,    1.0)
-		5: raw = Vector3( s,   -t,   -1.0)
+		0:
+			raw = Vector3(1.0, s, t)
+		1:
+			raw = Vector3(-1.0, -s, t)
+		2:
+			raw = Vector3(s, 1.0, t)
+		3:
+			raw = Vector3(-s, -1.0, t)
+		4:
+			raw = Vector3(s, t, 1.0)
+		5:
+			raw = Vector3(s, -t, -1.0)
 	raw = raw.normalized()
 	# Z-up → Y-up as a proper rotation (-90° about X). Using a bare axis swap
 	# (raw.x, raw.z, raw.y) is a reflection (det = -1) and mirrors the globe
@@ -797,35 +890,35 @@ static func unit_to_face_col_row(unit: Vector3, resolution: int) -> Array:
 	var ay: float = absf(r.y)
 	var az: float = absf(r.z)
 	var face: int = 0
-	var s: float  = 0.0
-	var t: float  = 0.0
+	var s: float = 0.0
+	var t: float = 0.0
 	if ax >= ay and ax >= az:
 		if r.x > 0.0:
 			face = 0
-			s =  r.y / r.x
-			t =  r.z / r.x
+			s = r.y / r.x
+			t = r.z / r.x
 		else:
 			face = 1
-			s =  r.y / r.x
+			s = r.y / r.x
 			t = -r.z / r.x
 	elif ay >= ax and ay >= az:
 		if r.y > 0.0:
 			face = 2
-			s =  r.x / r.y
-			t =  r.z / r.y
+			s = r.x / r.y
+			t = r.z / r.y
 		else:
 			face = 3
-			s =  r.x / r.y
+			s = r.x / r.y
 			t = -r.z / r.y
 	else:
 		if r.z > 0.0:
 			face = 4
-			s =  r.x / r.z
-			t =  r.y / r.z
+			s = r.x / r.z
+			t = r.y / r.z
 		else:
 			face = 5
 			s = -r.x / r.z
-			t =  r.y / r.z
+			t = r.y / r.z
 	# Invert equiangular pre-distortion — must match cube_sphere.py xyz_to_face_uv.
 	s = atan(s * tan(EQUIANGULAR_ALPHA)) / EQUIANGULAR_ALPHA
 	t = atan(t * tan(EQUIANGULAR_ALPHA)) / EQUIANGULAR_ALPHA

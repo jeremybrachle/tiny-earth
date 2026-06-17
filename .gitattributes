@@ -1,0 +1,14 @@
+# Normalize line endings — this repo is edited from both Windows and WSL.
+* text=auto
+
+# Scripts / shaders that must stay LF regardless of platform.
+*.sh   text eol=lf
+*.gd   text eol=lf
+*.py   text eol=lf
+
+# Binary assets — never diff, never touch line endings.
+*.bin    binary
+*.png    binary
+*.mp3    binary
+*.glb    binary
+*.import binary

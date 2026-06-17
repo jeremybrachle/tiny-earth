@@ -16,15 +16,15 @@ var face_id: int = 0
 var chunks_per_edge: int = 16
 
 const MAT_COLORS := {
-	1:  Color(0.25, 0.55, 0.20),  # Land fallback
-	2:  Color(0.10, 0.35, 0.65),  # Ocean / water body
-	3:  Color(0.85, 0.75, 0.45),  # Desert/Sand
-	4:  Color(0.40, 0.65, 0.25),  # Temperate
-	5:  Color(0.15, 0.40, 0.15),  # Forest
-	6:  Color(0.90, 0.93, 0.97),  # Snow/Ice
-	7:  Color(0.10, 0.48, 0.12),  # Tropical
-	8:  Color(0.68, 0.62, 0.22),  # Savanna
-	9:  Color(0.52, 0.48, 0.44),  # Rock/Mountain
+	1: Color(0.25, 0.55, 0.20),  # Land fallback
+	2: Color(0.10, 0.35, 0.65),  # Ocean / water body
+	3: Color(0.85, 0.75, 0.45),  # Desert/Sand
+	4: Color(0.40, 0.65, 0.25),  # Temperate
+	5: Color(0.15, 0.40, 0.15),  # Forest
+	6: Color(0.90, 0.93, 0.97),  # Snow/Ice
+	7: Color(0.10, 0.48, 0.12),  # Tropical
+	8: Color(0.68, 0.62, 0.22),  # Savanna
+	9: Color(0.52, 0.48, 0.44),  # Rock/Mountain
 	10: Color(0.28, 0.22, 0.16),  # Seafloor
 	11: Color(0.10, 0.35, 0.65),  # Ocean ceiling (solid stand-in for mat 2 at depth 15)
 }
@@ -37,9 +37,9 @@ var _water_chunk_insts := {}
 var _chunk_data := {}
 var _face_res := 0
 var _top_depth_grid := PackedInt32Array()
-var _top_mat_grid   := PackedByteArray()
-var _chunk_col_shapes := {}   # int key → CollisionShape3D, one per chunk
-var _opened_columns   := {}   # gi key → true for columns with outer shell fully dug
+var _top_mat_grid := PackedByteArray()
+var _chunk_col_shapes := {}  # int key → CollisionShape3D, one per chunk
+var _opened_columns := {}  # gi key → true for columns with outer shell fully dug
 
 # --- Water gravity settling (source-block, full-voxel) ---------------------
 # A frontier of "active" water cells that may still spread. Dig events seed it;
@@ -49,22 +49,23 @@ var _opened_columns   := {}   # gi key → true for columns with outer shell ful
 # level air; never flow upward. Bounded to depth [0, MAX_FLOW_DEPTH] so the
 # hollow centre stays dry. The ocean is an infinite source (water cells are
 # never removed) — communicating-vessel fill, not conservative finite volume.
-const FLOW_HZ        := 10.0  # settling ticks per second
-const FLOW_PER_TICK  := 64    # max cells processed per tick (per face)
-const MAX_FLOW_DEPTH := 15    # never fill deeper than this (keep centre dry)
+const FLOW_HZ := 10.0  # settling ticks per second
+const FLOW_PER_TICK := 64  # max cells processed per tick (per face)
+const MAX_FLOW_DEPTH := 15  # never fill deeper than this (keep centre dry)
 var _flow_timer: Timer = null
-var _active_water := {}        # gk → [c, r, d]  (membership + payload)
-var _active_order : Array = [] # FIFO of gk for round-robin draining
+var _active_water := {}  # gk → [c, r, d]  (membership + payload)
+var _active_order: Array = []  # FIFO of gk for round-robin draining
 
 
 func _ready() -> void:
 	pass  # The build is driven externally by VoxelPlanet.build_planet_async() so
-		  # the planet can assemble progressively across frames (loading screen).
+	# the planet can assemble progressively across frames (loading screen).
 
 
 # --- Staged build API (driven by VoxelPlanet's orchestrator) ---------------
 # Mirror of CubeFace's staged API so the orchestrator can drive outer and inner
 # shells through the same load → build-chunk → seam pipeline across frames.
+
 
 func init_face() -> void:
 	_mat = ShaderMaterial.new()
@@ -127,7 +128,8 @@ func rebuild_seam_edges() -> void:
 	var seen := {}
 	for i in chunks_per_edge:
 		for c in [[0, i], [last, i], [i, 0], [i, last]]:
-			var cx: int = c[0];  var cy: int = c[1]
+			var cx: int = c[0]
+			var cy: int = c[1]
 			var key: int = cx * chunks_per_edge + cy
 			if seen.has(key) or not _chunk_data.has(key):
 				continue
@@ -143,18 +145,18 @@ func _populate_grid_from_chunk(data: PackedByteArray, cx: int, cy: int) -> void:
 	for lc in CHUNK_SIZE:
 		for lr in CHUNK_SIZE:
 			var floor_depth := CHUNK_SIZE - 1
-			var floor_mat   := 9
+			var floor_mat := 9
 			for depth in CHUNK_SIZE:
 				var m := ChunkLoader.voxel(data, lc, lr, depth)
 				if m != 0 and m != 2:  # first non-air, non-water = seafloor or rock
 					floor_depth = depth
-					floor_mat   = m
+					floor_mat = m
 					break
 			var col := cx * CHUNK_SIZE + lc
 			var row := cy * CHUNK_SIZE + lr
-			var gi  := col * _face_res + row
+			var gi := col * _face_res + row
 			_top_depth_grid[gi] = floor_depth
-			_top_mat_grid[gi]   = floor_mat
+			_top_mat_grid[gi] = floor_mat
 
 
 # True voxel occupancy test, used for 6-way face culling.  A face is emitted
@@ -183,10 +185,10 @@ func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, dep
 	# emitting it when the neighbour is air fixes see-through holes. The `return
 	# true` fallbacks bias toward the clean culled look when the neighbour can't
 	# be resolved. Sample the cell CENTRE (+0.5), not the ambiguous corner.
-	var u    := (float(col) + 0.5) / float(_face_res)
-	var v    := (float(row) + 0.5) / float(_face_res)
+	var u := (float(col) + 0.5) / float(_face_res)
+	var v := (float(row) + 0.5) / float(_face_res)
 	var unit := _CubeFaceScript.face_uv_to_unit(face_id, u, v)
-	var r    := _CubeFaceScript.unit_to_face_col_row(unit, _face_res)
+	var r := _CubeFaceScript.unit_to_face_col_row(unit, _face_res)
 	var nface := int(r[0])
 	if nface == face_id:
 		# Degenerate: boundary pixel projected back to same face. Nudge inward.
@@ -201,8 +203,10 @@ func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, dep
 	var nb := get_parent().get_node_or_null("InnerCubeFace_%d" % nface) as InnerCubeFace
 	if nb == null or not is_instance_valid(nb):
 		return true
-	var ncol := int(r[1]);  var nrow := int(r[2])
-	var ncx  := ncol / CHUNK_SIZE;  var ncy := nrow / CHUNK_SIZE
+	var ncol := int(r[1])
+	var nrow := int(r[2])
+	var ncx := ncol / CHUNK_SIZE
+	var ncy := nrow / CHUNK_SIZE
 	var nkey := ncx * chunks_per_edge + ncy
 	if not nb._chunk_data.has(nkey):
 		return true
@@ -212,7 +216,16 @@ func _is_solid_at(cx: int, cy: int, data: PackedByteArray, lc: int, lr: int, dep
 
 # A radial (top/bottom) voxel face at radius r over one column cell. `outward`
 # orients the normal toward the surface (top) or toward the cavity (bottom).
-func _emit_radial_face(st: SurfaceTool, u0: float, v0: float, u1: float, v1: float, r: float, color: Color, outward: bool) -> void:
+func _emit_radial_face(
+	st: SurfaceTool,
+	u0: float,
+	v0: float,
+	u1: float,
+	v1: float,
+	r: float,
+	color: Color,
+	outward: bool
+) -> void:
 	var p00 := _CubeFaceScript.face_uv_to_unit(face_id, u0, v0) * r
 	var p10 := _CubeFaceScript.face_uv_to_unit(face_id, u1, v0) * r
 	var p01 := _CubeFaceScript.face_uv_to_unit(face_id, u0, v1) * r
@@ -222,64 +235,109 @@ func _emit_radial_face(st: SurfaceTool, u0: float, v0: float, u1: float, v1: flo
 		normal = -normal
 	st.set_color(color)
 	if (p10 - p00).cross(p11 - p00).dot(normal) > 0.0:
-		st.set_uv(Vector2(0,0)); st.add_vertex(p00)
-		st.set_uv(Vector2(1,0)); st.add_vertex(p10)
-		st.set_uv(Vector2(1,1)); st.add_vertex(p11)
-		st.set_uv(Vector2(0,0)); st.add_vertex(p00)
-		st.set_uv(Vector2(1,1)); st.add_vertex(p11)
-		st.set_uv(Vector2(0,1)); st.add_vertex(p01)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(p00)
+		st.set_uv(Vector2(1, 0))
+		st.add_vertex(p10)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(p11)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(p00)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(p11)
+		st.set_uv(Vector2(0, 1))
+		st.add_vertex(p01)
 	else:
-		st.set_uv(Vector2(0,0)); st.add_vertex(p00)
-		st.set_uv(Vector2(1,1)); st.add_vertex(p11)
-		st.set_uv(Vector2(1,0)); st.add_vertex(p10)
-		st.set_uv(Vector2(0,0)); st.add_vertex(p00)
-		st.set_uv(Vector2(0,1)); st.add_vertex(p01)
-		st.set_uv(Vector2(1,1)); st.add_vertex(p11)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(p00)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(p11)
+		st.set_uv(Vector2(1, 0))
+		st.add_vertex(p10)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(p00)
+		st.set_uv(Vector2(0, 1))
+		st.add_vertex(p01)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(p11)
 
 
 # A lateral voxel face toward `dir`, spanning r_in (cavity side) to r_out
 # (surface side).  Dot-product winding points the normal into the open neighbour.
-func _emit_side_face(st: SurfaceTool, col0: int, row0: int, dir: Vector2i, r_in: float, r_out: float, res: float, eps: float, color: Color) -> void:
-	var u_a: float; var v_a: float; var u_b: float; var v_b: float
+func _emit_side_face(
+	st: SurfaceTool,
+	col0: int,
+	row0: int,
+	dir: Vector2i,
+	r_in: float,
+	r_out: float,
+	res: float,
+	eps: float,
+	color: Color
+) -> void:
+	var u_a: float
+	var v_a: float
+	var u_b: float
+	var v_b: float
 	if dir.x == 1:
-		u_a = (col0 + 1) / res;  v_a = row0        / res
-		u_b = (col0 + 1) / res;  v_b = (row0 + 1)  / res
+		u_a = (col0 + 1) / res
+		v_a = row0 / res
+		u_b = (col0 + 1) / res
+		v_b = (row0 + 1) / res
 	elif dir.x == -1:
-		u_a = col0       / res;  v_a = (row0 + 1)  / res
-		u_b = col0       / res;  v_b = row0         / res
+		u_a = col0 / res
+		v_a = (row0 + 1) / res
+		u_b = col0 / res
+		v_b = row0 / res
 	elif dir.y == 1:
-		u_a = (col0 + 1) / res;  v_a = (row0 + 1)  / res
-		u_b = col0       / res;  v_b = (row0 + 1)  / res
+		u_a = (col0 + 1) / res
+		v_a = (row0 + 1) / res
+		u_b = col0 / res
+		v_b = (row0 + 1) / res
 	else:
-		u_a = col0       / res;  v_a = row0         / res
-		u_b = (col0 + 1) / res;  v_b = row0         / res
+		u_a = col0 / res
+		v_a = row0 / res
+		u_b = (col0 + 1) / res
+		v_b = row0 / res
 
-	var pa_top  := _CubeFaceScript.face_uv_to_unit(face_id, u_a, v_a) * r_out
-	var pb_top  := _CubeFaceScript.face_uv_to_unit(face_id, u_b, v_b) * r_out
+	var pa_top := _CubeFaceScript.face_uv_to_unit(face_id, u_a, v_a) * r_out
+	var pb_top := _CubeFaceScript.face_uv_to_unit(face_id, u_b, v_b) * r_out
 	var pa_base := _CubeFaceScript.face_uv_to_unit(face_id, u_a, v_a) * r_in
 	var pb_base := _CubeFaceScript.face_uv_to_unit(face_id, u_b, v_b) * r_in
 
-	var u_mid  := (u_a + u_b) * 0.5
-	var v_mid  := (v_a + v_b) * 0.5
+	var u_mid := (u_a + u_b) * 0.5
+	var v_mid := (v_a + v_b) * 0.5
 	var mid_pt := _CubeFaceScript.face_uv_to_unit(face_id, u_mid, v_mid)
 	var out_pt := _CubeFaceScript.face_uv_to_unit(face_id, u_mid + dir.x * eps, v_mid + dir.y * eps)
 	var expected_out := out_pt - mid_pt
 
 	st.set_color(color)
 	if (pa_top - pa_base).cross(pb_top - pa_base).dot(expected_out) > 0.0:
-		st.set_uv(Vector2(0,0)); st.add_vertex(pa_base)
-		st.set_uv(Vector2(0,1)); st.add_vertex(pa_top)
-		st.set_uv(Vector2(1,1)); st.add_vertex(pb_top)
-		st.set_uv(Vector2(0,0)); st.add_vertex(pa_base)
-		st.set_uv(Vector2(1,1)); st.add_vertex(pb_top)
-		st.set_uv(Vector2(1,0)); st.add_vertex(pb_base)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(pa_base)
+		st.set_uv(Vector2(0, 1))
+		st.add_vertex(pa_top)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(pb_top)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(pa_base)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(pb_top)
+		st.set_uv(Vector2(1, 0))
+		st.add_vertex(pb_base)
 	else:
-		st.set_uv(Vector2(0,0)); st.add_vertex(pa_base)
-		st.set_uv(Vector2(1,1)); st.add_vertex(pb_top)
-		st.set_uv(Vector2(0,1)); st.add_vertex(pa_top)
-		st.set_uv(Vector2(0,0)); st.add_vertex(pa_base)
-		st.set_uv(Vector2(1,0)); st.add_vertex(pb_base)
-		st.set_uv(Vector2(1,1)); st.add_vertex(pb_top)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(pa_base)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(pb_top)
+		st.set_uv(Vector2(0, 1))
+		st.add_vertex(pa_top)
+		st.set_uv(Vector2(0, 0))
+		st.add_vertex(pa_base)
+		st.set_uv(Vector2(1, 0))
+		st.add_vertex(pb_base)
+		st.set_uv(Vector2(1, 1))
+		st.add_vertex(pb_top)
 
 
 # True per-voxel mesher: every solid voxel emits exactly the faces exposed to an
@@ -288,9 +346,9 @@ func _emit_side_face(st: SurfaceTool, col0: int, row0: int, dir: Vector2i, r_in:
 # holes show their full surroundings, and horizontal tunnels mesh correctly.
 # Consumed by BOTH render (_rebuild_chunk) and collision (_build_chunk_collision_mesh).
 func _add_chunk_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int, cy: int) -> void:
-	var res        := float(_face_res)
+	var res := float(_face_res)
 	var voxel_size := planet_radius / res
-	var eps        := 0.5 / res
+	var eps := 0.5 / res
 
 	for lc in CHUNK_SIZE:
 		for lr in CHUNK_SIZE:
@@ -306,15 +364,15 @@ func _add_chunk_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int, cy: 
 					continue
 				if m == 2:
 					continue  # water is never solid — drawn as translucent swim-through
-							  # water by _add_water_to_surface (never a solid/collidable
-							  # face). Stored ocean-ceiling art uses mat 11, not mat 2, so
-							  # this only affects flood-filled water reaching depth 15:
-							  # without it, that bottom-layer water re-solidified into an
-							  # unbreakable blue block. Matches _is_solid_at (mat 2 = open).
+					# water by _add_water_to_surface (never a solid/collidable
+					# face). Stored ocean-ceiling art uses mat 11, not mat 2, so
+					# this only affects flood-filled water reaching depth 15:
+					# without it, that bottom-layer water re-solidified into an
+					# unbreakable blue block. Matches _is_solid_at (mat 2 = open).
 
 				var color: Color = MAT_COLORS.get(m, Color(0.4, 0.35, 0.3))
 				var r_out := planet_radius - (float(depth) + 1.0) * voxel_size  # toward surface
-				var r_in  := planet_radius - (float(depth) + 2.0) * voxel_size  # toward cavity
+				var r_in := planet_radius - (float(depth) + 2.0) * voxel_size  # toward cavity
 
 				# Outward (top) face — exposed if the voxel just outward is open.
 				if not _is_solid_at(cx, cy, data, lc, lr, depth - 1):
@@ -329,9 +387,10 @@ func _add_chunk_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int, cy: 
 				# Four lateral faces — exposed where the side neighbour is open.
 				for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 					if not _is_solid_at(cx, cy, data, lc + dir.x, lr + dir.y, depth):
-						var side_color := Color(color.r * 0.65, color.g * 0.65, color.b * 0.65, color.a)
+						var side_color := Color(
+							color.r * 0.65, color.g * 0.65, color.b * 0.65, color.a
+						)
 						_emit_side_face(st, col0, row0, dir, r_in, r_out, res, eps, side_color)
-
 
 
 # Emits a single translucent outward face per ocean column (the topmost water
@@ -345,9 +404,9 @@ func _add_chunk_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int, cy: 
 # Side faces use an explicit air (mat 0) check to skip water→water walls, which
 # would draw a grid line at every adjacent-column boundary.
 func _add_water_to_surface(st_w: SurfaceTool, data: PackedByteArray, cx: int, cy: int) -> void:
-	var res        := float(_face_res)
+	var res := float(_face_res)
 	var voxel_size := planet_radius / res
-	var eps        := 0.5 / res
+	var eps := 0.5 / res
 	var color: Color = MAT_COLORS.get(2, Color(0.10, 0.35, 0.65))
 
 	for lc in CHUNK_SIZE:
@@ -363,7 +422,7 @@ func _add_water_to_surface(st_w: SurfaceTool, data: PackedByteArray, cx: int, cy
 				if m != 2:
 					continue
 				var r_out := planet_radius - (float(depth) + 1.0) * voxel_size
-				var r_in  := planet_radius - (float(depth) + 2.0) * voxel_size
+				var r_in := planet_radius - (float(depth) + 2.0) * voxel_size
 
 				# Top face: only when the voxel immediately outward (depth-1) is air.
 				# depth > 0 guard prevents stacking with the outer shell's sea surface.
@@ -421,8 +480,8 @@ func mat_at(col: int, row: int, depth: int) -> int:
 		return 0
 	if depth < 0 or depth >= CHUNK_SIZE:
 		return 0
-	var cx  := col / CHUNK_SIZE
-	var cy  := row / CHUNK_SIZE
+	var cx := col / CHUNK_SIZE
+	var cy := row / CHUNK_SIZE
 	var key := cx * chunks_per_edge + cy
 	if not _chunk_data.has(key):
 		return 0
@@ -449,8 +508,10 @@ func _enqueue_water(c: int, r: int, d: int) -> void:
 # Write mat-2 into the in-face voxel (c, r, d) and record its chunk as dirty.
 # Returns false if the chunk isn't loaded. Caller is responsible for bounds.
 func _set_water(c: int, r: int, d: int, dirty: Dictionary) -> bool:
-	var cx: int = c / CHUNK_SIZE;  var cy: int = r / CHUNK_SIZE
-	var lc: int = c % CHUNK_SIZE;  var lr: int = r % CHUNK_SIZE
+	var cx: int = c / CHUNK_SIZE
+	var cy: int = r / CHUNK_SIZE
+	var lc: int = c % CHUNK_SIZE
+	var lr: int = r % CHUNK_SIZE
 	var key: int = cx * chunks_per_edge + cy
 	if not _chunk_data.has(key):
 		return false
@@ -516,7 +577,8 @@ func _cross_seam_water(nc: int, nr: int, d: int) -> bool:
 	var nb := get_parent().get_node_or_null("InnerCubeFace_%d" % nface) as InnerCubeFace
 	if nb == null or not is_instance_valid(nb):
 		return false
-	var ncol: int = int(rr[1]);  var nrow: int = int(rr[2])
+	var ncol: int = int(rr[1])
+	var nrow: int = int(rr[2])
 	if nb.mat_at(ncol, nrow, d) != 0:
 		return false
 	nb.seed_external_water(ncol, nrow, d)
@@ -528,10 +590,17 @@ func _cross_seam_water(nc: int, nr: int, d: int) -> bool:
 # the depth-above cell (water falls in) and same-level/below water, plus seam
 # neighbours (the dug cell may border ocean on an adjacent face).
 func _seed_flow_around(col: int, row: int, depth: int) -> void:
-	for n in [[col + 1, row, depth], [col - 1, row, depth],
-			  [col, row + 1, depth], [col, row - 1, depth],
-			  [col, row, depth - 1], [col, row, depth + 1]]:
-		var nc: int = n[0];  var nr: int = n[1];  var nd: int = n[2]
+	for n in [
+		[col + 1, row, depth],
+		[col - 1, row, depth],
+		[col, row + 1, depth],
+		[col, row - 1, depth],
+		[col, row, depth - 1],
+		[col, row, depth + 1]
+	]:
+		var nc: int = n[0]
+		var nr: int = n[1]
+		var nd: int = n[2]
 		if nc >= 0 and nc < _face_res and nr >= 0 and nr < _face_res:
 			if mat_at(nc, nr, nd) == 2:
 				_enqueue_water(nc, nr, nd)
@@ -547,7 +616,8 @@ func _seed_flow_around(col: int, row: int, depth: int) -> void:
 			var nb := get_parent().get_node_or_null("InnerCubeFace_%d" % nface) as InnerCubeFace
 			if nb == null or not is_instance_valid(nb):
 				continue
-			var ncol: int = int(rr[1]);  var nrow: int = int(rr[2])
+			var ncol: int = int(rr[1])
+			var nrow: int = int(rr[2])
 			if nb.mat_at(ncol, nrow, nd) == 2:
 				nb._enqueue_water(ncol, nrow, nd)
 
@@ -567,7 +637,9 @@ func _on_flow_tick() -> void:
 		_active_water.erase(gk)
 		if payload == null:
 			continue
-		var c: int = payload[0];  var r: int = payload[1];  var d: int = payload[2]
+		var c: int = payload[0]
+		var r: int = payload[1]
+		var d: int = payload[2]
 		if _settle_one(c, r, d, dirty):
 			_enqueue_water(c, r, d)  # still a source — keep feeding next tick
 		processed += 1
@@ -597,8 +669,10 @@ func _rebuild_seam_neighbors(col: int, row: int) -> void:
 		var nb := get_parent().get_node_or_null("InnerCubeFace_%d" % nface) as InnerCubeFace
 		if nb == null or not is_instance_valid(nb):
 			continue
-		var nc: int = int(r[1]);  var nr: int = int(r[2])
-		var ncx: int = nc / CHUNK_SIZE;  var ncy: int = nr / CHUNK_SIZE
+		var nc: int = int(r[1])
+		var nr: int = int(r[2])
+		var ncx: int = nc / CHUNK_SIZE
+		var ncy: int = nr / CHUNK_SIZE
 		var nkey: int = ncx * nb.chunks_per_edge + ncy
 		if nb._chunk_data.has(nkey):
 			nb._rebuild_chunk(ncx, ncy, nkey)
@@ -623,10 +697,10 @@ func _rebuild_dirty_chunks(dirty: Dictionary, rebuilt: Dictionary) -> void:
 # Remove a specific voxel by column + depth. Opens the column if it becomes
 # fully empty (chains to open_column so the cavity passage is created).
 func remove_voxel(col: int, row: int, depth: int) -> bool:
-	var cx  := col / CHUNK_SIZE
-	var cy  := row / CHUNK_SIZE
-	var lc  := col % CHUNK_SIZE
-	var lr  := row % CHUNK_SIZE
+	var cx := col / CHUNK_SIZE
+	var cy := row / CHUNK_SIZE
+	var lc := col % CHUNK_SIZE
+	var lr := row % CHUNK_SIZE
 	var key := cx * chunks_per_edge + cy
 	if not _chunk_data.has(key):
 		return false
@@ -651,9 +725,11 @@ func remove_voxel(col: int, row: int, depth: int) -> bool:
 		return true
 	_build_chunk_collision.call_deferred(cx, cy)
 	if not rebuilt.has(key):
-		_rebuild_chunk(cx, cy, key);  rebuilt[key] = true
+		_rebuild_chunk(cx, cy, key)
+		rebuilt[key] = true
 	for nb in [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]:
-		var nx: int = nb[0];  var ny: int = nb[1]
+		var nx: int = nb[0]
+		var ny: int = nb[1]
 		if nx < 0 or nx >= chunks_per_edge or ny < 0 or ny >= chunks_per_edge:
 			continue
 		var nkey := nx * chunks_per_edge + ny
@@ -690,10 +766,10 @@ func get_top_mat(col: int, row: int) -> int:
 
 
 func remove_top_voxel(col: int, row: int) -> bool:
-	var cx  := col / CHUNK_SIZE
-	var cy  := row / CHUNK_SIZE
-	var lc  := col % CHUNK_SIZE
-	var lr  := row % CHUNK_SIZE
+	var cx := col / CHUNK_SIZE
+	var cy := row / CHUNK_SIZE
+	var lc := col % CHUNK_SIZE
+	var lr := row % CHUNK_SIZE
 	var key := cx * chunks_per_edge + cy
 	if not _chunk_data.has(key):
 		return false
@@ -718,12 +794,12 @@ func remove_top_voxel(col: int, row: int) -> bool:
 
 	# Update grid: new floor is the next non-water solid below.
 	var new_floor := floor_d
-	var new_mat   := 9
+	var new_mat := 9
 	for depth in range(floor_d + 1, CHUNK_SIZE):
 		var m := ChunkLoader.voxel(data, lc, lr, depth)
 		if m != 0 and m != 2:
 			new_floor = depth
-			new_mat   = m
+			new_mat = m
 			break
 	if new_floor == floor_d:
 		# No deeper solid — inner column fully dug; open passage to cavity.
@@ -732,13 +808,15 @@ func remove_top_voxel(col: int, row: int) -> bool:
 
 	var gi := col * _face_res + row
 	_top_depth_grid[gi] = new_floor
-	_top_mat_grid[gi]   = new_mat
+	_top_mat_grid[gi] = new_mat
 
 	_build_chunk_collision.call_deferred(cx, cy)
 	if not rebuilt.has(key):
-		_rebuild_chunk(cx, cy, key);  rebuilt[key] = true
+		_rebuild_chunk(cx, cy, key)
+		rebuilt[key] = true
 	for nb in [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]:
-		var nx: int = nb[0];  var ny: int = nb[1]
+		var nx: int = nb[0]
+		var ny: int = nb[1]
 		if nx < 0 or nx >= chunks_per_edge or ny < 0 or ny >= chunks_per_edge:
 			continue
 		var nkey := nx * chunks_per_edge + ny

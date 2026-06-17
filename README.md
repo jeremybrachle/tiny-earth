@@ -1,9 +1,13 @@
-# Tiny Semantic Earth
+# Tiny Earth
 
-**Walk around Earth in five minutes. Every feature was chosen by an algorithm.**
+[![Python](https://github.com/jeremybrachle/tiny-earth/actions/workflows/python.yml/badge.svg)](https://github.com/jeremybrachle/tiny-earth/actions/workflows/python.yml)
+[![GDScript](https://github.com/jeremybrachle/tiny-earth/actions/workflows/gdscript.yml/badge.svg)](https://github.com/jeremybrachle/tiny-earth/actions/workflows/gdscript.yml)
+[![CodeQL](https://github.com/jeremybrachle/tiny-earth/actions/workflows/codeql.yml/badge.svg)](https://github.com/jeremybrachle/tiny-earth/actions/workflows/codeql.yml)
+![License](https://img.shields.io/badge/license-All%20Rights%20Reserved-red)
 
-Tiny Semantic Earth is a portfolio research project that asks a deceptively simple question: how few geographic features does it take for a human to recognize a globe as Earth? A Python data pipeline fetches land/ocean boundaries, elevation, biomes, cities, capitals, and landmarks from public datasets, ranks every feature using a composite importance score, and exports only the top N survivors to the game engine. The result is a planet you can walk around in minutes, where every placed landmark was chosen by a scoring formula trained on population, cultural prominence, geographic isolation, and transport importance. The project demonstrates GIS data pipelines, game engine integration, procedural generation, and original research framing.
+Tiny Earth is a project designed to compress our planet into a walkable quad sphere built with voxels. Kinda like that one popular crafting game you've heard about except this is on a non-flat planet (unfortunately this current model is still geocentric though, I didn't want it to be *too* accurate).
 
+It's not full scale (hence "tiny") but if you ever wanted to walk around a small version of Earth, then you've come to the right place #walkingsimulator
 
 ![lakes](images/lakes.png)
 ![water](images/water.png)
@@ -12,172 +16,179 @@ Tiny Semantic Earth is a portfolio research project that asks a deceptively simp
 
 ---
 
-## Core Research Question
+## About this project
 
 > *"What is the minimum amount of geographic information required for a human to instantly recognize Earth while still being able to walk around the entire planet in a few minutes?"*
 
-This is not a Minecraft clone. The novel contribution is a **semantic compression engine** — a Python pipeline that ranks real-world geographic features by importance and cultural salience, then projects only the survivors onto a tiny walkable sphere.
-
 ---
 
-## Pipeline Overview
+## How it's built
+
+Real-world datasets go in one end, voxel chunks come out the other:
 
 ```
-[Natural Earth]  [ETOPO Relief]  [WWF Biomes]  [OSM / Overpass]
-  (shapefiles)    (GeoTIFF)      (polygons)     (cities, landmarks)
-       │              │               │                 │
-       ▼              ▼               ▼                 ▼
-  download.py    elevation.py    biomes.py         fetch_osm.py
-  landmask.py        │               │                 │
-       │              └───────────────┘                 │
-       │                      │             fetch_wiki.py ◄── [Wikipedia Pageviews]
-       │                      │             (cultural_salience_index)
-       │                      │                 │
-       └──────────────────────┴─────────────────┘
-                              │
-                              ▼
-                          score.py
-                    (composite importance score)
-                              │
-                              ▼
-                         compress.py
-                    (configurable top-N cutoff)
-                              │
-                              ▼
-                          export.py
-              ┌───────────────┴───────────────┐
-              ▼                               ▼
-  data/exports/features.geojson    engine/planet/faces/
-  (scored feature set)             face_N/chunk_X_Y.bin
-                                   (binary voxel chunks)
+[Natural Earth]       [ETOPO 2022]          [Köppen-Geiger]
+ land + lakes          elevation +           climate zones
+ (shapefiles)          bathymetry (NetCDF)   (GeoTIFF)
+       │                     │                     │
+       ▼                     ▼                     ▼
+   landmask.py           elevation.py          biomes.py
+  land/ocean mask       stacks voxel          paints each land
+  (+ lake subtraction)  columns by height     voxel its biome
+       │                     │                     │
+       └─────────────────────┴─────────────────────┘
+                             │
+                             ▼
+                         export.py
+                bakes the cube-sphere grid into
+                zlib-compressed voxel chunks
+                             │
+                             ▼
+            engine/planet/faces/face_N/chunk_X_Y.bin
 ```
 
-All scripts live in `pipeline/src/`.
+`download.py` fetches and caches the source datasets; `cube_sphere.py` holds the projection math everything else shares. All scripts live in `pipeline/src/`.
+
+The cultural-salience scoring layer — the part that answers the question above — is designed but not written yet. When it lands it'll slot in between the data and the export, deciding what's worth keeping. For now the planet just ships everything.
 
 ---
 
-## Development Phases
+## The engine
 
-| Phase | Name | Status |
-|---|---|---|
-| 0 | Foundation — repo, CI, pipeline skeleton, ADRs | Not started |
-| 1 | Walkable Sphere — gravity, player movement | Not started |
-| 2 | Voxel Planet — cube sphere, chunk system | Not started |
-| 3 | Earth Silhouette — land/ocean mask from Natural Earth | Not started |
-| 4 | Elevation — ETOPO terrain heights | Not started |
-| 5 | Biomes — WWF ecoregion material IDs | Not started |
-| 6 | Cities and Semantic Compression Engine | Not started |
-| 7 | Landmark Placement — hybrid voxel + low-poly | Not started |
-| 8 | Visual Polish and Portfolio Release | Not started |
-| A | Stretch — WASM Export | Deferred |
-| B | Stretch — User Recognition Study | Deferred |
-| C | Stretch — Research Paper | Deferred |
-| D | Stretch — Tiny Bay Prototype | Deferred |
+Godot 4.x. It's free, MIT-licensed, open source, and doesn't take a cut when this eventually goes up for sale — which is honestly most of why it's here. Everything is GDScript: the voxel mesher, the gravity-driven water, the chunk loading, all of it. No C#, no proprietary engine, no telemetry phoning home.
+
+Architecture notes — the multi-shell voxel design — live in [docs/adr/ADR-001-multi-shell-architecture.md](docs/adr/ADR-001-multi-shell-architecture.md).
 
 ---
 
-## Engine
-
-**Godot 4.x** (MIT license) — fully open source, no runtime fees, native C# support for performance-critical systems (chunk generation, gravity physics), GDScript for rapid game logic.
-
-> **Note:** An `ARCHITECTURE.md` covering engine integration design, sphere mesh strategy, and data-driven placement is planned but not yet written.
-
----
-
-## Repository Structure
+## Repository layout
 
 ```
 tiny-earth/
 ├── README.md
-├── REFERENCES.md
-├── ATTRIBUTION.md
-├── LICENSES.md
+├── CHANGELOG.md
+├── LICENSE              # this project's own code
+├── ATTRIBUTION.md       # third-party credits + obligations
+├── LICENSES.md          # third-party license texts
 │
-├── pipeline/
+├── pipeline/            # Python: real-world data → voxel chunks
 │   ├── config/planet.yaml
+│   ├── requirements.txt
 │   └── src/
+│       ├── cube_sphere.py   # shared projection math
 │       ├── download.py
 │       ├── landmask.py
 │       ├── elevation.py
 │       ├── biomes.py
-│       ├── fetch_osm.py
-│       ├── fetch_wiki.py
-│       ├── score.py
-│       ├── compress.py
-│       ├── cube_sphere.py
+│       ├── interior.py
+│       ├── render_map.py
 │       └── export.py
 │
-├── engine/                    # Godot 4 project
+├── engine/              # Godot 4 project
 │   ├── project.godot
-│   ├── scripts/
-│   │   ├── planet/
-│   │   ├── player/
-│   │   └── world/
-│   ├── assets/landmarks/      # low-poly landmark meshes (.glb)
-│   └── planet/                # baked voxel chunks from pipeline (committed — clone & run)
+│   ├── scenes/          # main_menu, world
+│   ├── scripts/         # planet, player, world, ui, audio
+│   ├── shaders/
+│   ├── audio/
+│   ├── test/            # GUT unit tests (projection + voxel-address math)
+│   └── planet/          # baked voxel chunks — committed, so it runs on clone
 │
-├── data/
-│   ├── raw/                   # gitignored
-│   ├── processed/
-│   └── exports/
-│
-└── .github/workflows/pipeline-test.yml
+├── docs/                # handoff notes + architecture decisions
+└── .github/workflows/   # CI: Python, GDScript, CodeQL
 ```
+
+(`data/` — the raw downloads and cached intermediates — is generated locally and gitignored. The pipeline rebuilds it.)
 
 ---
 
-## Getting Started
+## Getting started
 
-> **Note:** The pipeline and engine are not yet implemented. These instructions are a stub and will be updated as Phase 0 completes.
+Two ways in. Most people want the first one.
 
-**Requirements:**
-- Python 3.11+
-- Godot 4.x
-- Internet access for initial data fetch (OpenStreetMap, Natural Earth, ETOPO, Wikipedia)
+### Just play it
 
-**Clone:**
+The voxel chunks are committed, so there's no build step — clone it, open the `engine/` folder in Godot 4.x, and hit Play.
+
 ```bash
-git clone https://github.com/<your-username>/tiny-earth.git
+git clone <repo-url>
 cd tiny-earth
+# open engine/ in the Godot editor, or from the command line:
+godot --path engine
 ```
 
-**Run the pipeline (once implemented):**
+### Rebuild the planet from scratch (optional)
+
+Only needed if you want to regenerate the world yourself — bump the resolution, swap a data source, that kind of thing. Wants Python 3.11+ and an internet connection for the first fetch (everything caches after that).
+
 ```bash
 cd pipeline
 pip install -r requirements.txt
-python src/export.py --top-n 200
-# Outputs: data/exports/features.geojson + engine/planet/faces/
-```
 
-**Open the engine project:**
-- Open the `engine/` folder as a Godot 4 project in the Godot editor.
+# fetch + cache the source datasets
+python src/download.py            # Natural Earth land
+python src/download.py --lakes    #   + lakes
+python src/download.py --etopo    # ETOPO 2022 relief (large download)
+python src/download.py --koppen   # Köppen-Geiger climate raster
 
-**Run via WSL":**
-```bash
-godot --path ~/programming/tiny-earth/engine
+# build the cube-sphere data layers
+python src/landmask.py --lakes
+python src/elevation.py
+python src/biomes.py
+
+# bake the voxel chunks into engine/planet/faces/
+python src/export.py --landmask --elevation
+python src/interior.py --root .   # subsurface volume
 ```
 
 ---
 
-## Legal and Attribution
+## Legal & attribution
 
-This project uses only open or public-domain data sources:
+Everything here is built on open or public-domain data:
 
 | Source | License | Notes |
 |---|---|---|
-| Natural Earth | Public Domain | Land/ocean shapefiles for terrain generation |
-| OpenStreetMap | ODbL 1.0 | **Attribution required in-game:** "© OpenStreetMap contributors" |
-| ETOPO (NOAA) | Public Domain | Elevation and bathymetry data |
-| WWF Terrestrial Ecoregions | Non-commercial with attribution | Biome classification |
-| Wikipedia Pageviews API | CC BY | Used as a numeric signal only; no article text reproduced |
+| Natural Earth | Public Domain | Land/lake polygons for the land/ocean mask |
+| ETOPO 2022 (NOAA) | Public Domain | Elevation and bathymetry |
+| Köppen-Geiger (Beck et al. 2018) | CC BY 4.0 | Biome classification — **attribution required** (see ATTRIBUTION.md) |
 | Godot Engine 4.x | MIT | Game engine |
-| josebasierra/voxel-planets | MIT | Architectural reference; attribution required; not directly ported |
+| josebasierra/voxel-planets | MIT | Architectural reference; not directly ported |
 
-Code from `ddupont808/planetcraft` (no license) and the Bowerbyte "Blocky Planet" article (no open license) was studied for architectural reference only — no code copied. See [ATTRIBUTION.md](ATTRIBUTION.md) for third-party license obligations and [LICENSES.md](LICENSES.md) for full license texts.
+Code from `ddupont808/planetcraft` (no license) and the Bowerbyte "Blocky Planet" article (no open license) was studied for architectural reference only — no code copied. Full credit and license obligations are in [ATTRIBUTION.md](ATTRIBUTION.md); full license texts in [LICENSES.md](LICENSES.md).
+
+The project's own code is **all rights reserved** — see [LICENSE](LICENSE).
+
+---
+
+## Development
+
+CI runs on every push and PR (see the badges up top): Python lint + tests, GDScript lint, and CodeQL scanning. The GDScript unit tests (GUT) are run locally. To run the same checks locally:
+
+**Python pipeline** — lint, format, and test:
+```bash
+cd pipeline
+pip install -e ".[dev]"      # installs ruff + pytest
+ruff check . && ruff format --check .
+pytest tests/ --cov=src
+```
+
+**GDScript** — lint and format the engine code:
+```bash
+pip install "gdtoolkit==4.*"
+gdlint engine/scripts
+gdformat --check engine/scripts
+```
+
+**GDScript unit tests** — run with [GUT](https://github.com/bitwes/Gut) (install it into `engine/addons/gut/`, via the editor's AssetLib or a release zip), then:
+```bash
+godot --headless --path engine -s res://addons/gut/gut_cmdln.gd -gdir=res://test -gexit
+```
 
 ---
 
 ## Documentation
 
-- [ATTRIBUTION.md](ATTRIBUTION.md) — Third-party license obligations
-- [LICENSES.md](LICENSES.md) — Full license texts
+- [CHANGELOG.md](CHANGELOG.md) — what changed, when
+- [ATTRIBUTION.md](ATTRIBUTION.md) — third-party credits and obligations
+- [LICENSES.md](LICENSES.md) — full third-party license texts
+- [LICENSE](LICENSE) — license for this project's own code

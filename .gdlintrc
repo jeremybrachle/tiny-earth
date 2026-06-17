@@ -1,0 +1,22 @@
+# gdtoolkit / gdlint configuration. We keep the rules that catch real problems
+# (unused signals, shadowed/invalid names, dead code, etc.) and relax only a
+# couple of purely stylistic ones that would create churn for no benefit.
+
+max-line-length: 120
+max-file-lines: 1500
+function-arguments-number: 12
+max-public-methods: 40
+
+# Preloaded-script constants are idiomatically PascalCase (they stand in for a
+# type), e.g. `_CubeFaceScript`; also allow SCREAMING_SNAKE. Anything else is
+# still flagged.
+load-constant-name: '_?[A-Z][A-Za-z0-9_]*'
+
+disable:
+  # Member-ordering within a class is cosmetic; reordering existing files buys
+  # nothing, so we don't enforce a fixed order.
+  - class-definitions-order
+  # Return-flow style preferences — not bugs.
+  - no-elif-return
+  - no-else-return
+  - max-returns

@@ -2,19 +2,17 @@
 Tests for pipeline/src/elevation.py
 """
 
-import os
 from pathlib import Path
-from unittest.mock import patch
 
 import numpy as np
 import pytest
 
-from elevation import elev_to_layers, build_elevation, VOXEL_LAYERS, MAX_ELEV_M, MIRRORED_FACES
-
+from elevation import MAX_ELEV_M, MIRRORED_FACES, VOXEL_LAYERS, build_elevation, elev_to_layers
 
 # ---------------------------------------------------------------------------
 # elev_to_layers unit tests
 # ---------------------------------------------------------------------------
+
 
 def test_elev_to_layers_zero():
     assert elev_to_layers(0) == 0
@@ -67,6 +65,7 @@ def test_elev_to_layers_all_values_in_range():
 # engine/scripts/planet/cube_face.gd — not a data problem.
 # ---------------------------------------------------------------------------
 
+
 def test_mirrored_faces_is_empty():
     assert MIRRORED_FACES == frozenset()
 
@@ -79,6 +78,7 @@ def test_mirrored_faces_contains_no_faces():
 # ---------------------------------------------------------------------------
 # build_elevation with synthetic ETOPO data
 # ---------------------------------------------------------------------------
+
 
 def _make_synthetic_etopo(tmp_path: Path, flat_value: float = 0.0):
     """
@@ -146,6 +146,7 @@ def test_build_elevation_mirror_faces_present(tmp_path):
     """build_elevation should apply column flip for MIRRORED_FACES without error."""
     # Use an asymmetric z field so a flip would produce a different result
     from scipy.io import netcdf_file
+
     nlat, nlon = 180, 360
     lats = np.linspace(-89.5, 89.5, nlat, dtype=np.float32)
     lons = np.linspace(-179.5, 179.5, nlon, dtype=np.float32)
@@ -168,15 +169,15 @@ def test_build_elevation_mirror_faces_present(tmp_path):
 # ---------------------------------------------------------------------------
 
 ETOPO_PATH = Path(__file__).parents[2] / "data/cache/etopo_60s.nc"
-ELEV_NPY   = Path(__file__).parents[2] / "data/cache/elevation.npy"
+ELEV_NPY = Path(__file__).parents[2] / "data/cache/elevation.npy"
 
 skip_if_no_etopo = pytest.mark.skipif(
     not ETOPO_PATH.exists(),
-    reason="ETOPO file not downloaded (run: python pipeline/src/download.py --etopo)"
+    reason="ETOPO file not downloaded (run: python pipeline/src/download.py --etopo)",
 )
 skip_if_no_elev = pytest.mark.skipif(
     not ELEV_NPY.exists(),
-    reason="elevation.npy not generated (run: python pipeline/src/elevation.py)"
+    reason="elevation.npy not generated (run: python pipeline/src/elevation.py)",
 )
 
 
@@ -212,7 +213,8 @@ def test_elevation_some_cells_elevated():
 
 @skip_if_no_elev
 def test_everest_has_high_elevation():
-    from cube_sphere import latlon_to_face_uv, face_uv_to_grid
+    from cube_sphere import face_uv_to_grid, latlon_to_face_uv
+
     arr = np.load(ELEV_NPY)
     res = arr.shape[1]
     face, u, v = latlon_to_face_uv(27.99, 86.93)  # Everest
@@ -223,12 +225,15 @@ def test_everest_has_high_elevation():
     # res=256. The point of this test is that the Everest region is high terrain,
     # not flat/ocean — so the threshold scales with resolution.
     threshold = 6 if res >= 512 else 5
-    assert layers >= threshold, f"Everest region layers={layers}, expected ≥{threshold} (high terrain)"
+    assert layers >= threshold, (
+        f"Everest region layers={layers}, expected ≥{threshold} (high terrain)"
+    )
 
 
 @skip_if_no_elev
 def test_pacific_center_is_flat():
-    from cube_sphere import latlon_to_face_uv, face_uv_to_grid
+    from cube_sphere import face_uv_to_grid, latlon_to_face_uv
+
     arr = np.load(ELEV_NPY)
     res = arr.shape[1]
     face, u, v = latlon_to_face_uv(0.0, -150.0)  # Pacific Ocean

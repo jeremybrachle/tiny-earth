@@ -31,19 +31,19 @@ import yaml
 
 from cube_sphere import EQUIANGULAR_ALPHA
 
-LANDMASK_CACHE_REL   = Path("data/cache/landmask.npy")
-BIOMES_CACHE_REL     = Path("data/cache/biomes.npy")
-ELEVATION_CACHE_REL  = Path("data/cache/elevation.npy")
-KOPPEN_CACHE_REL     = Path("data/cache/koppen_beck2018.tif")
+LANDMASK_CACHE_REL = Path("data/cache/landmask.npy")
+BIOMES_CACHE_REL = Path("data/cache/biomes.npy")
+ELEVATION_CACHE_REL = Path("data/cache/elevation.npy")
+KOPPEN_CACHE_REL = Path("data/cache/koppen_beck2018.tif")
 
-MATERIAL_OCEAN     = 2
-MATERIAL_DESERT    = 3
+MATERIAL_OCEAN = 2
+MATERIAL_DESERT = 3
 MATERIAL_TEMPERATE = 4
-MATERIAL_FOREST    = 5
-MATERIAL_SNOW      = 6
-MATERIAL_TROPICAL  = 7
-MATERIAL_SAVANNA   = 8
-MATERIAL_MOUNTAIN  = 9
+MATERIAL_FOREST = 5
+MATERIAL_SNOW = 6
+MATERIAL_TROPICAL = 7
+MATERIAL_SAVANNA = 8
+MATERIAL_MOUNTAIN = 9
 
 MOUNTAIN_ELEV_THRESHOLD = 4  # ETOPO depth layers; depth 4 ≈ 4,400 m above sea level
 
@@ -51,18 +51,37 @@ MOUNTAIN_ELEV_THRESHOLD = 4  # ETOPO depth layers; depth 4 ≈ 4,400 m above sea
 # Classes: 1-4=Tropical, 5-6=Arid desert, 7-8=Arid steppe,
 #          9-17=Temperate, 18-29=Continental, 30-31=Polar.
 KOPPEN_TO_MATERIAL = {
-    1: MATERIAL_TROPICAL, 2: MATERIAL_TROPICAL,
-    3: MATERIAL_TROPICAL, 4: MATERIAL_TROPICAL,
-    5: MATERIAL_DESERT,   6: MATERIAL_DESERT,
-    7: MATERIAL_SAVANNA,  8: MATERIAL_SAVANNA,
-    9: MATERIAL_TEMPERATE, 10: MATERIAL_TEMPERATE, 11: MATERIAL_TEMPERATE,
-    12: MATERIAL_TEMPERATE, 13: MATERIAL_TEMPERATE, 14: MATERIAL_TEMPERATE,
-    15: MATERIAL_TEMPERATE, 16: MATERIAL_TEMPERATE, 17: MATERIAL_TEMPERATE,
-    18: MATERIAL_FOREST, 19: MATERIAL_FOREST, 20: MATERIAL_FOREST,
-    21: MATERIAL_FOREST, 22: MATERIAL_FOREST, 23: MATERIAL_FOREST,
-    24: MATERIAL_FOREST, 25: MATERIAL_FOREST, 26: MATERIAL_FOREST,
-    27: MATERIAL_FOREST, 28: MATERIAL_FOREST, 29: MATERIAL_FOREST,
-    30: MATERIAL_SNOW, 31: MATERIAL_SNOW,
+    1: MATERIAL_TROPICAL,
+    2: MATERIAL_TROPICAL,
+    3: MATERIAL_TROPICAL,
+    4: MATERIAL_TROPICAL,
+    5: MATERIAL_DESERT,
+    6: MATERIAL_DESERT,
+    7: MATERIAL_SAVANNA,
+    8: MATERIAL_SAVANNA,
+    9: MATERIAL_TEMPERATE,
+    10: MATERIAL_TEMPERATE,
+    11: MATERIAL_TEMPERATE,
+    12: MATERIAL_TEMPERATE,
+    13: MATERIAL_TEMPERATE,
+    14: MATERIAL_TEMPERATE,
+    15: MATERIAL_TEMPERATE,
+    16: MATERIAL_TEMPERATE,
+    17: MATERIAL_TEMPERATE,
+    18: MATERIAL_FOREST,
+    19: MATERIAL_FOREST,
+    20: MATERIAL_FOREST,
+    21: MATERIAL_FOREST,
+    22: MATERIAL_FOREST,
+    23: MATERIAL_FOREST,
+    24: MATERIAL_FOREST,
+    25: MATERIAL_FOREST,
+    26: MATERIAL_FOREST,
+    27: MATERIAL_FOREST,
+    28: MATERIAL_FOREST,
+    29: MATERIAL_FOREST,
+    30: MATERIAL_SNOW,
+    31: MATERIAL_SNOW,
 }
 
 
@@ -74,9 +93,10 @@ def load_config(config_path: Path) -> dict:
 def load_koppen(tif_path: Path) -> tuple:
     """Load Beck 2018 GeoTIFF. Returns (data, transform) where data is (nlat, nlon) uint8."""
     import rasterio
+
     with rasterio.open(str(tif_path)) as src:
-        data = src.read(1)           # (nlat, nlon) uint8
-        transform = src.transform    # affine: pixel → geographic coords
+        data = src.read(1)  # (nlat, nlon) uint8
+        transform = src.transform  # affine: pixel → geographic coords
     return data, transform
 
 
@@ -93,10 +113,10 @@ def _sample_koppen(
     # Affine: (col, row) → (lon, lat).  Inverse gives pixel coords from geographic.
     # transform.c = west edge lon, transform.f = north edge lat
     # transform.a = pixel width (lon), transform.e = pixel height (lat, negative)
-    west  = transform.c
+    west = transform.c
     north = transform.f
-    res_x = transform.a   # degrees per pixel (positive)
-    res_y = transform.e   # degrees per pixel (negative)
+    res_x = transform.a  # degrees per pixel (positive)
+    res_y = transform.e  # degrees per pixel (negative)
 
     nlat, nlon = data.shape
 
@@ -177,11 +197,17 @@ def build_biomes(
             # Latitude-band fallback (no Köppen data available)
             abs_lat = np.abs(lat_2d)
             biome_grid = np.where(
-                abs_lat >= 65, MATERIAL_SNOW,
-                np.where(abs_lat >= 50, MATERIAL_FOREST,
-                np.where(abs_lat < 15, MATERIAL_TROPICAL,
-                np.where(abs_lat < 25, MATERIAL_SAVANNA,
-                         MATERIAL_TEMPERATE)))
+                abs_lat >= 65,
+                MATERIAL_SNOW,
+                np.where(
+                    abs_lat >= 50,
+                    MATERIAL_FOREST,
+                    np.where(
+                        abs_lat < 15,
+                        MATERIAL_TROPICAL,
+                        np.where(abs_lat < 25, MATERIAL_SAVANNA, MATERIAL_TEMPERATE),
+                    ),
+                ),
             ).astype(np.uint8)
 
         if elevation is not None:
@@ -193,13 +219,13 @@ def build_biomes(
         biomes[face] = np.where(land, biome_grid, landmask[face])
 
         counts = {
-            "tropical":  int((biomes[face] == MATERIAL_TROPICAL).sum()),
-            "savanna":   int((biomes[face] == MATERIAL_SAVANNA).sum()),
-            "desert":    int((biomes[face] == MATERIAL_DESERT).sum()),
+            "tropical": int((biomes[face] == MATERIAL_TROPICAL).sum()),
+            "savanna": int((biomes[face] == MATERIAL_SAVANNA).sum()),
+            "desert": int((biomes[face] == MATERIAL_DESERT).sum()),
             "temperate": int((biomes[face] == MATERIAL_TEMPERATE).sum()),
-            "forest":    int((biomes[face] == MATERIAL_FOREST).sum()),
-            "snow":      int((biomes[face] == MATERIAL_SNOW).sum()),
-            "mountain":  int((biomes[face] == MATERIAL_MOUNTAIN).sum()),
+            "forest": int((biomes[face] == MATERIAL_FOREST).sum()),
+            "snow": int((biomes[face] == MATERIAL_SNOW).sum()),
+            "mountain": int((biomes[face] == MATERIAL_MOUNTAIN).sum()),
         }
         print(f"  face {face}: {counts}")
 
@@ -207,7 +233,9 @@ def build_biomes(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Assign biome material IDs to the cube sphere grid.")
+    parser = argparse.ArgumentParser(
+        description="Assign biome material IDs to the cube sphere grid."
+    )
     parser.add_argument("--config", default="pipeline/config/planet.yaml")
     parser.add_argument("--root", default=".")
     args = parser.parse_args()
@@ -224,7 +252,10 @@ def main() -> None:
 
     landmask = np.load(landmask_path)
     if landmask.shape != (6, resolution, resolution):
-        print(f"Error: landmask shape {landmask.shape} does not match (6, {resolution}, {resolution})", file=sys.stderr)
+        print(
+            f"Error: landmask shape {landmask.shape} does not match (6, {resolution}, {resolution})",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     elevation_path = repo_root / ELEVATION_CACHE_REL
@@ -232,10 +263,14 @@ def main() -> None:
     if elevation_path.exists():
         elevation = np.load(elevation_path)
         if elevation.shape != (6, resolution, resolution):
-            print(f"Warning: elevation shape {elevation.shape} mismatch — skipping mountain override.")
+            print(
+                f"Warning: elevation shape {elevation.shape} mismatch — skipping mountain override."
+            )
             elevation = None
         else:
-            print(f"Loaded elevation from {elevation_path} (mountain threshold: depth ≥ {MOUNTAIN_ELEV_THRESHOLD})")
+            print(
+                f"Loaded elevation from {elevation_path} (mountain threshold: depth ≥ {MOUNTAIN_ELEV_THRESHOLD})"
+            )
     else:
         print(f"Warning: elevation not found at {elevation_path} — no mountain coloring.")
 
@@ -246,7 +281,9 @@ def main() -> None:
         koppen = load_koppen(koppen_path)
         print(f"  raster shape: {koppen[0].shape}")
     else:
-        print(f"Warning: Köppen raster not found at {koppen_path} — falling back to latitude bands.")
+        print(
+            f"Warning: Köppen raster not found at {koppen_path} — falling back to latitude bands."
+        )
         print("Run: python pipeline/src/download.py --koppen")
 
     print(f"Building biomes grid at resolution {resolution} ...")

@@ -1,0 +1,33 @@
+name: GDScript
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install gdtoolkit
+        run: python -m pip install "gdtoolkit==4.*"
+
+      - name: Lint (gdlint)
+        run: gdlint engine/scripts
+
+      - name: Format check (gdformat)
+        run: gdformat --check engine/scripts
+
+# The GUT unit tests (engine/test/) are run locally, not in CI. Running GUT
+# headless on Godot 4.6 trips a global-class/UID registration bug on the CI
+# import path ("Class GutUtils hides a global script class") that does not
+# reproduce in a normal local run. The tests pass locally — see
+# README → Development. Not worth a flaky CI job; revisit if the headless
+# Godot/GUT interaction stabilizes in a later version.

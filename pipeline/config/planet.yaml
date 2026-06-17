@@ -1,4 +1,4 @@
-# Tiny Semantic Earth — planet configuration
+# Tiny Earth — planet configuration
 # WARNING: chunk_size is frozen once Phase 2 begins. Changing it requires
 # regenerating all chunk files. See docs/adr/004-chunk-format.md.
 

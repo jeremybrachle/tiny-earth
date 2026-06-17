@@ -1,0 +1,29 @@
+Copyright (c) 2026 Jeremy Brachle. All rights reserved.
+
+This license covers the original source code, assets, and documentation in this
+repository authored by the project owner (collectively, the "Project"). It does
+NOT cover the third-party libraries, data, or media the Project depends on —
+those retain their own licenses, listed in ATTRIBUTION.md and LICENSES.md.
+
+The Project is provided publicly for viewing, evaluation, and portfolio review.
+No license is granted to use, copy, modify, merge, publish, distribute,
+sublicense, sell, or create derivative works of the Project, in whole or in
+part, without the prior written permission of the copyright holder.
+
+You MAY:
+  - View and read the source code.
+  - Clone the repository and run it locally for personal, non-commercial
+    evaluation.
+
+You MAY NOT, without prior written permission:
+  - Redistribute the Project or any substantial portion of it.
+  - Use the Project or its code/assets in another product, commercial or
+    otherwise.
+  - Publish a derivative work based on the Project.
+
+THE PROJECT IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+WITH THE PROJECT OR THE USE OR OTHER DEALINGS IN THE PROJECT.

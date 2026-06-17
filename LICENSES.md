@@ -1,12 +1,16 @@
 # Licenses
 
-Full license texts for third-party components used by Tiny Semantic Earth. See [ATTRIBUTION.md](ATTRIBUTION.md) for which components each license applies to.
+Full license texts for third-party components used by Tiny Earth. See
+[ATTRIBUTION.md](ATTRIBUTION.md) for which components each license applies to.
+
+The game and pipeline code in this repository is covered separately — see
+[LICENSE](LICENSE).
 
 ---
 
 ## MIT License
 
-*Applies to: Godot Engine 4.x, GDAL, josebasierra/voxel-planets*
+*Applies to: Godot Engine 4.x, josebasierra/voxel-planets, pyshp, netCDF4, PyYAML*
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -18,7 +22,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ## BSD 3-Clause License
 
-*Applies to: Rasterio, GeoPandas*
+*Applies to: NumPy, SciPy, Shapely, Rasterio*
 
 Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
 
@@ -32,11 +36,28 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 ---
 
-## Open Database License (ODbL 1.0)
+## Apache License 2.0
 
-*Applies to: OpenStreetMap data*
+*Applies to: Requests*
 
-Full text: https://opendatacommons.org/licenses/odbl/1-0/
+Full text: https://www.apache.org/licenses/LICENSE-2.0
+
+---
+
+## HPND (Historical Permission Notice and Disclaimer)
+
+*Applies to: Pillow*
+
+Full text: https://github.com/python-pillow/Pillow/blob/main/LICENSE
+
+---
+
+## Creative Commons Attribution 4.0 (CC BY 4.0)
+
+*Applies to: Köppen-Geiger climate data (Beck et al. 2018)*
+
+Full text: https://creativecommons.org/licenses/by/4.0/legalcode
+Attribution wording is in [ATTRIBUTION.md](ATTRIBUTION.md).
 
 ---
 
