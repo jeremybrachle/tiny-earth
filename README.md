@@ -16,7 +16,7 @@ Tiny Semantic Earth is a portfolio research project that asks a deceptively simp
 
 > *"What is the minimum amount of geographic information required for a human to instantly recognize Earth while still being able to walk around the entire planet in a few minutes?"*
 
-This is not a Minecraft clone. The novel contribution is a **semantic compression engine** — a Python pipeline that ranks real-world geographic features by importance and cultural salience, then projects only the survivors onto a tiny walkable sphere. See [docs/RESEARCH.md](docs/RESEARCH.md) for the full hypothesis, scoring formula, compression ratio concept, and proposed user study design.
+This is not a Minecraft clone. The novel contribution is a **semantic compression engine** — a Python pipeline that ranks real-world geographic features by importance and cultural salience, then projects only the survivors onto a tiny walkable sphere.
 
 ---
 
@@ -52,7 +52,7 @@ This is not a Minecraft clone. The novel contribution is a **semantic compressio
                                    (binary voxel chunks)
 ```
 
-All scripts live in `pipeline/src/`. See [docs/PIPELINE.md](docs/PIPELINE.md) for stage descriptions, GeoJSON field specs, binary chunk format, and rate-limit handling.
+All scripts live in `pipeline/src/`.
 
 ---
 
@@ -74,13 +74,11 @@ All scripts live in `pipeline/src/`. See [docs/PIPELINE.md](docs/PIPELINE.md) fo
 | C | Stretch — Research Paper | Deferred |
 | D | Stretch — Tiny Bay Prototype | Deferred |
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for goals, deliverables, "done when" success criteria, and the weekend milestone table.
-
 ---
 
 ## Engine
 
-**Godot 4.x** (MIT license) — fully open source, no runtime fees, native C# support for performance-critical systems (chunk generation, gravity physics), GDScript for rapid game logic. See `docs/adr/001-engine-godot.md` for the full decision rationale.
+**Godot 4.x** (MIT license) — fully open source, no runtime fees, native C# support for performance-critical systems (chunk generation, gravity physics), GDScript for rapid game logic.
 
 > **Note:** An `ARCHITECTURE.md` covering engine integration design, sphere mesh strategy, and data-driven placement is planned but not yet written.
 
@@ -94,17 +92,6 @@ tiny-earth/
 ├── REFERENCES.md
 ├── ATTRIBUTION.md
 ├── LICENSES.md
-│
-├── docs/
-│   ├── PIPELINE.md
-│   ├── ROADMAP.md
-│   ├── RESEARCH.md
-│   └── adr/
-│       ├── 001-engine-godot.md
-│       ├── 002-cube-sphere.md
-│       ├── 003-python-pipeline.md
-│       ├── 004-chunk-format.md
-│       └── 005-hybrid-visual-style.md
 │
 ├── pipeline/
 │   ├── config/planet.yaml
@@ -127,7 +114,7 @@ tiny-earth/
 │   │   ├── player/
 │   │   └── world/
 │   ├── assets/landmarks/      # low-poly landmark meshes (.glb)
-│   └── planet/                # generated output from pipeline (gitignored raw)
+│   └── planet/                # baked voxel chunks from pipeline (committed — clone & run)
 │
 ├── data/
 │   ├── raw/                   # gitignored
@@ -186,15 +173,11 @@ This project uses only open or public-domain data sources:
 | Godot Engine 4.x | MIT | Game engine |
 | josebasierra/voxel-planets | MIT | Architectural reference; attribution required; not directly ported |
 
-Code from `ddupont808/planetcraft` (no license) and the Bowerbyte "Blocky Planet" article (no open license) was studied for architectural reference only — no code copied. See [docs/REFERENCES.md](docs/REFERENCES.md) for the full catalog with URLs, licenses, and relevance notes for every source. See [ATTRIBUTION.md](ATTRIBUTION.md) for third-party license obligations and [LICENSES.md](LICENSES.md) for full license texts.
+Code from `ddupont808/planetcraft` (no license) and the Bowerbyte "Blocky Planet" article (no open license) was studied for architectural reference only — no code copied. See [ATTRIBUTION.md](ATTRIBUTION.md) for third-party license obligations and [LICENSES.md](LICENSES.md) for full license texts.
 
 ---
 
 ## Documentation
 
-- [docs/PIPELINE.md](docs/PIPELINE.md) — Data pipeline stages, GeoJSON schema, binary chunk format, rate limits
-- [docs/ROADMAP.md](docs/ROADMAP.md) — Development phases, success criteria, weekend milestone table
-- [docs/RESEARCH.md](docs/RESEARCH.md) — Research hypothesis, scoring formula, compression ratio, user study design
-- [docs/REFERENCES.md](docs/REFERENCES.md) — All external sources with URLs, licenses, and relevance notes
 - [ATTRIBUTION.md](ATTRIBUTION.md) — Third-party license obligations
 - [LICENSES.md](LICENSES.md) — Full license texts
