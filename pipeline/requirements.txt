@@ -4,7 +4,7 @@
 numpy>=1.26        # arrays, the cube-sphere grids
 scipy>=1.11        # ETOPO NetCDF reader (scipy.io)
 netCDF4>=1.6       # ETOPO NetCDF reader (fallback)
-shapely>=2.0       # land/lake polygon geometry + point-in-polygon
+shapely>=2.1.2       # land/lake polygon geometry + point-in-polygon
 pyshp>=2.3         # read Natural Earth shapefiles (pure Python, no GDAL)
 rasterio>=1.3      # read the Köppen-Geiger GeoTIFF
 Pillow>=10.0       # write the inner-globe texture PNG
