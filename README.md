@@ -2,7 +2,6 @@
 
 [![Python](https://github.com/jeremybrachle/tiny-earth/actions/workflows/python.yml/badge.svg)](https://github.com/jeremybrachle/tiny-earth/actions/workflows/python.yml)
 [![GDScript](https://github.com/jeremybrachle/tiny-earth/actions/workflows/gdscript.yml/badge.svg)](https://github.com/jeremybrachle/tiny-earth/actions/workflows/gdscript.yml)
-[![CodeQL](https://github.com/jeremybrachle/tiny-earth/actions/workflows/codeql.yml/badge.svg)](https://github.com/jeremybrachle/tiny-earth/actions/workflows/codeql.yml)
 ![License](https://img.shields.io/badge/license-All%20Rights%20Reserved-red)
 
 Tiny Earth is a project designed to compress our planet into a walkable quad sphere built with voxels. Kinda like that one popular crafting game you've heard about except this is on a non-flat planet (unfortunately this current model is still geocentric though, I didn't want it to be *too* accurate).
@@ -94,7 +93,7 @@ tiny-earth/
 │   └── planet/          # baked voxel chunks — committed, so it runs on clone
 │
 ├── docs/                # handoff notes + architecture decisions
-└── .github/workflows/   # CI: Python, GDScript, CodeQL
+└── .github/workflows/   # CI: Python, GDScript
 ```
 
 (`data/` — the raw downloads and cached intermediates — is generated locally and gitignored. The pipeline rebuilds it.)
