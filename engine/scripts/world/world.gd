@@ -71,10 +71,16 @@ func _process(delta: float) -> void:
 	if scale == 0.0:
 		return
 	_sun_angle += TAU / _DAY_LENGTH_SEC * scale * delta
-	# The sun orbits in the equatorial (X-Z) plane about the polar (+Y) axis, so
-	# an equatorial observer sees it rise on one horizon, pass directly overhead,
-	# and set on the other — east-rise / west-set, no permanent high elevation.
-	# (Negate _sun_angle if east/west ends up reversed for your map orientation.)
+	_apply_sun_direction()
+
+
+# Point the sun for the current _sun_angle. The sun orbits in the equatorial (X-Z)
+# plane about the polar (+Y) axis, so an equatorial observer sees it rise on one
+# horizon, pass directly overhead, and set on the other — east-rise / west-set, no
+# permanent high elevation. (Negate _sun_angle if east/west ends up reversed for
+# your map orientation.) The subsolar point — where the sun is straight overhead —
+# is the surface point in the +sun_dir direction.
+func _apply_sun_direction() -> void:
 	var sun_dir := Vector3(cos(_sun_angle), 0.0, sin(_sun_angle))
 	_sun.look_at_from_position(Vector3.ZERO, -sun_dir, Vector3.UP)
 
@@ -159,6 +165,10 @@ func _setup_sun() -> void:
 	_sun.shadow_enabled = true
 	_sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 	_sun.directional_shadow_max_distance = 600.0
+	# Sun stays off through the loading screen — the space view of the building
+	# planet is lit only by ambient, with no day/night sweep. It's switched on in
+	# _on_build_finished, oriented to dawn at the player's spawn (see _start_build).
+	_sun.visible = false
 
 
 # --- Progressive build + loading overlay -----------------------------------
@@ -175,8 +185,14 @@ func _start_build() -> void:
 
 	var planet_r: float = float(planet.get("planet_radius"))
 	var player := get_node_or_null("Player") as Node3D
-	# Spawn-out reveal order keys off the player's spawn position (Kansas).
+	# Spawn-out reveal order keys off the player's spawn position (the location
+	# chosen on the menu — see SpawnPoints / player.gd _ready()).
 	var spawn_pos: Vector3 = player.global_position if player else Vector3(0.0, planet_r, 0.0)
+	# Start every run at dawn wherever the player spawns: put the subsolar point a
+	# quarter-turn (90°) east of the spawn longitude so the sun begins on the horizon
+	# and climbs as the day/night cycle advances. The spawn's longitude angle in the
+	# X-Z plane is atan2(z, x); the sun is overhead at +sun_dir, so we trail it 90°.
+	_sun_angle = atan2(spawn_pos.z, spawn_pos.x) - PI / 2.0
 	if player:
 		player.set_physics_process(false)  # no surface yet; also keeps frames free
 		player.set_process_unhandled_input(false)  # don't let a stray click capture the mouse
@@ -191,14 +207,35 @@ func _start_build() -> void:
 
 
 # A fixed camera out in space aimed at the planet centre from the spawn
-# hemisphere, so North America (which builds first) faces the viewer and the
-# planet is framed dead-centre. No orbit, no input — purely a static vantage.
+# hemisphere, so the chosen starting continent (which builds first) faces the
+# viewer and the planet is framed dead-centre. No orbit, no input — purely a
+# static vantage.
 func _setup_observation_camera(spawn_pos: Vector3, planet_r: float) -> void:
 	_obs_cam = Camera3D.new()
 	_obs_cam.far = planet_r * 10.0
 	add_child(_obs_cam)
-	_obs_cam.global_position = spawn_pos.normalized() * planet_r * 2.2
-	_obs_cam.look_at(Vector3.ZERO, Vector3.UP)
+	# Closer = bigger planet on screen (was 2.2). At this distance the globe's
+	# silhouette ~asin(r/D) already fills most of the ~75° FOV, so there isn't much
+	# headroom to also lift it — "bigger" and "higher with a bottom margin" trade off.
+	# 1.9 is a modest zoom-in that still leaves a few degrees of top headroom for the
+	# lift below. DIAL 1: lower → bigger (don't go below ~1.7 or the lift clips the top).
+	var cam_dist := planet_r * 1.9
+	_obs_cam.global_position = spawn_pos.normalized() * cam_dist
+	# Aim slightly BELOW the planet centre so the globe sits HIGHER on screen,
+	# leaving the bottom of the frame for the progress overlay. Offsetting the look
+	# target is predictable (no guessing v_offset's world-unit scaling): the planet
+	# centre is lifted by ~atan(drop / cam_dist) of the vertical FOV. Screen-up is the
+	# world-up component perpendicular to the view ray, so the lift is straight up
+	# regardless of which hemisphere we're viewing (incl. the Antarctica pole pick).
+	var view_dir := (-_obs_cam.global_position).normalized()
+	var screen_up := (Vector3.UP - Vector3.UP.dot(view_dir) * view_dir)
+	if screen_up.length() < 0.01:
+		screen_up = Vector3.FORWARD  # near-polar view: any perpendicular up works
+	screen_up = screen_up.normalized()
+	# DIAL 2: bigger factor → higher on screen. Kept small (~3° lift) because the
+	# globe nearly fills the frame; raise toward ~0.10 only if you also zoom out.
+	var look_drop := cam_dist * 0.05
+	_obs_cam.look_at(-screen_up * look_drop, screen_up)
 	_obs_cam.current = true
 
 
@@ -262,8 +299,24 @@ func _on_build_progress(done: int, total: int) -> void:
 
 func _on_build_finished() -> void:
 	_building = false
+	# Sun on now that the player takes control, oriented to dawn at the spawn
+	# (_sun_angle was set in _start_build) so the very first lit frame is correct.
+	_sun.visible = true
+	_apply_sun_direction()
 	var player := get_node_or_null("Player") as Node3D
 	if player:
+		# Drop the player onto the actual terrain surface. player.gd._ready() placed
+		# them at planet_radius + 1.5, but the outer shell stacks land voxels OUTWARD,
+		# so any elevated column (mountains, even moderate terrain) sits well above
+		# that — the player would otherwise start buried in solid rock and be stuck.
+		# Now that the build is finished the collision shapes exist, so a raycast from
+		# high above the spawn direction down toward the planet centre lands on the
+		# true top voxel. Done before re-enabling physics so the first frame is clean.
+		_drop_player_to_surface(player)
+		# Face east into the sunrise: the dawn sun sits toward +sun_dir (see
+		# _start_build / _apply_sun_direction), so aim the player's heading there.
+		if player.has_method("face_horizontal"):
+			player.face_horizontal(Vector3(cos(_sun_angle), 0.0, sin(_sun_angle)))
 		player.set_physics_process(true)
 		player.set_process_unhandled_input(true)  # restore look/dig/Esc input
 		player.visible = true
@@ -296,3 +349,36 @@ func _on_build_finished() -> void:
 	var pause_menu := preload("res://scripts/ui/pause_menu.gd").new()
 	pause_menu.name = "PauseMenu"
 	add_child(pause_menu)
+
+
+# Snap the player down onto the real top voxel of their spawn column. The spawn
+# DIRECTION (which continent) is fixed by player.gd from the menu pick; only the
+# RADIUS needs correcting for terrain elevation, so we keep the existing radial
+# direction and raycast inward along it. Start well above the tallest possible
+# column (15 voxels of stacked land) and end just below sea level so we always
+# straddle the surface, then place the capsule a small clearance above the hit.
+func _drop_player_to_surface(player: Node3D) -> void:
+	var planet := get_node_or_null("VoxelPlanet") as Node3D
+	if planet == null:
+		return
+	var planet_r: float = float(planet.get("planet_radius"))
+	var origin: Vector3 = planet.global_position
+	var dir: Vector3 = (player.global_position - origin).normalized()
+	if dir.length() < 0.5:
+		dir = Vector3.UP  # degenerate (player at centre) — pick a stable axis
+
+	# Generous margins: max land stack is ~15 voxels (vox = planet_r/resolution),
+	# so planet_r * 0.25 above the nominal surface clears any mountain; ending
+	# below sea level guarantees the ray crosses the terrain top.
+	var from: Vector3 = origin + dir * (planet_r * 1.25)
+	var to: Vector3 = origin + dir * (planet_r * 0.9)
+	var space := get_world_3d().direct_space_state
+	var q := PhysicsRayQueryParameters3D.create(from, to)
+	var body := player as CollisionObject3D
+	if body:
+		q.exclude = [body.get_rid()]
+	var hit := space.intersect_ray(q)
+	if hit.is_empty():
+		return  # no surface found (shouldn't happen) — leave the _ready() spawn
+	# Capsule sits 1.5 above the surface, matching player.gd's original clearance.
+	player.global_position = hit["position"] + dir * 1.5

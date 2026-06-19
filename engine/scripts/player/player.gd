@@ -2,8 +2,28 @@ extends CharacterBody3D
 
 const GRAVITY_STRENGTH := 20.0
 const WALK_SPEED := 5.0
-const SWIM_SPEED := 2.5
+const SWIM_SPEED := 4.5
 const JUMP_VELOCITY := 8.0
+
+# Swimming vertical motion. Default is to SINK (SINK_ACCEL → SINK_MAX terminal).
+# Holding Space rises smoothly to the surface (SWIM_RISE_SPEED) and then floats
+# there without bobbing — the vertical velocity is damped to rest and no gravity is
+# applied while at the surface, so open-water surface swimming is smooth. The only
+# upward launch is the climb-out: holding Space while LOOKING at a one-block shore
+# ledge lifts the player up and onto it (CLIMB_RISE_SPEED) so you can leave the
+# water without flying. WATER_VERTICAL_RATE is the damping rate for a smooth rise.
+const SWIM_RISE_SPEED := 2.5
+const CLIMB_RISE_SPEED := 5.0
+const SINK_ACCEL := 8.0
+const SINK_MAX := 4.0
+const WATER_VERTICAL_RATE := 8.0
+# Shore-climb probe. A point STEP_REACH ahead of the player (in the look direction)
+# is checked for a solid top within the climb window [STEP_MIN_DOWN, STEP_MAX_UP]
+# measured from the feet. The window reaches BELOW the feet too, so a shelf sitting
+# a block or two under the surface still counts as climbable.
+const STEP_REACH := 1.6
+const STEP_MAX_UP := 2.3
+const STEP_MIN_DOWN := -2.0
 const FLY_SPEED := WALK_SPEED * 5.0
 
 const MOUSE_SENSITIVITY := 0.08  # degrees per pixel
@@ -43,7 +63,12 @@ func _ready() -> void:
 	if not planet:
 		planet = get_node_or_null("../VoxelPlanet") as StaticBody3D
 	if planet:
-		var surface_normal := (global_position - planet.global_position).normalized()
+		# Spawn direction comes from the location picked on the menu (carried in
+		# SpawnPoints.selected_index), not the baked .tscn transform — so the
+		# Player transform in world.tscn is just a sensible fallback now. Default
+		# index 0 is central Kansas, so launching world.tscn directly is unchanged.
+		var spawn: Dictionary = SpawnPoints.selected()
+		var surface_normal := Coords.latlon_to_unit(spawn["lat"], spawn["lon"])
 		var axis := Vector3.UP.cross(surface_normal)
 		if axis.length() > 0.001:
 			global_basis = global_basis.rotated(
@@ -59,7 +84,10 @@ func _ready() -> void:
 	add_child(cl)
 	_water_overlay = ColorRect.new()
 	_water_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_water_overlay.color = Color(0.02, 0.10, 0.32, 0.60)
+	# Fog-like underwater murk: a desaturated blue-green that reads as depth haze
+	# rather than a flat coloured pane. Alpha kept below the old 0.60 so the surface
+	# line and nearby geometry stay legible once submerged.
+	_water_overlay.color = Color(0.05, 0.20, 0.30, 0.52)
 	_water_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_water_overlay.visible = false
 	cl.add_child(_water_overlay)
@@ -135,7 +163,12 @@ func _physics_process(delta: float) -> void:
 	# never reads as "swimming".
 	var planet_r := _planet_radius()
 	var near_surface := global_position.length() > planet_r * 0.9
-	_swimming = (not _flying) and near_surface and _surface_mat_at(global_position) == 2
+	# Body-in-water samples. chest_wet/body_wet tell "in the water" from "in the air
+	# above the ocean" in the swim branch; body_wet also keeps swim+climb control
+	# alive as you reach a shore where the column underfoot already reads as land.
+	var chest_wet := _voxel_mat_at(global_position + surface_normal * 0.9) == 2
+	var body_wet := chest_wet or _voxel_mat_at(global_position + surface_normal * 0.1) == 2
+	_swimming = (not _flying) and near_surface and (_surface_mat_at(global_position) == 2 or body_wet)
 	# Underwater tint shows only when the camera is INSIDE an actual water voxel,
 	# not merely somewhere below an ocean column. The old radius-gated heuristic
 	# false-fired when flying through inner-shell rock under ocean tiles.
@@ -161,24 +194,45 @@ func _physics_process(delta: float) -> void:
 		velocity = Vector3.ZERO
 		_swim_bob = 0.0
 	elif _swimming:
-		# Gravity still keeps the player on the sphere surface. Movement is
-		# slower and jumping is replaced by a gentle surface-push (wading feel).
-		if not is_on_floor():
-			velocity += gravity_dir * GRAVITY_STRENGTH * delta
-
 		var wish_dir := cam_fwd * -input.y + cam_right * input.x
-		var vert_vel := velocity.project(gravity_dir)
-		var horiz_vel := velocity - vert_vel
+		var horiz_vel := velocity - velocity.project(gravity_dir)
 
 		if wish_dir.length() > 0.01:
 			horiz_vel = wish_dir.normalized() * SWIM_SPEED
 		else:
 			horiz_vel = horiz_vel.lerp(Vector3.ZERO, 0.4)
 
-		velocity = vert_vel + horiz_vel
+		# Climbing out is deliberate, not automatic: the player must HOLD Space while
+		# LOOKING at a climbable ledge (a step within reach — see _can_step_out). Facing
+		# comes from the camera, so this only fires when you choose to climb a nearby
+		# step, never as a surprise auto-jump. While climbing we drive the player
+		# forward into the bank so the rise actually carries them up onto it.
+		var holding_up := Input.is_action_pressed("ui_accept")
+		var face_dir := _project_to_plane(-camera.global_basis.z, surface_normal)
+		var ledge_ahead := holding_up and face_dir != Vector3.ZERO and _can_step_out(face_dir, surface_normal)
 
-		if Input.is_action_just_pressed("ui_accept") and is_on_floor():
-			velocity += surface_normal * JUMP_VELOCITY
+		var v_up := velocity.dot(surface_normal)
+		var damp := clampf(WATER_VERTICAL_RATE * delta, 0.0, 1.0)
+		if ledge_ahead:
+			v_up = CLIMB_RISE_SPEED  # rise up the bank…
+			horiz_vel = face_dir * SWIM_SPEED  # …and move onto it
+			velocity = horiz_vel + surface_normal * v_up
+		elif not body_wet:
+			# Body is above the surface (e.g. just dropped out of fly over the ocean):
+			# apply real gravity so the player falls naturally into the water rather
+			# than drifting down at the slow in-water sink rate.
+			if not is_on_floor():
+				velocity += gravity_dir * GRAVITY_STRENGTH * delta
+			velocity = velocity.project(gravity_dir) + horiz_vel
+		elif holding_up:
+			if chest_wet:
+				v_up = lerp(v_up, SWIM_RISE_SPEED, damp)  # rise smoothly to the surface
+			else:
+				v_up = lerp(v_up, 0.0, damp)  # float at the surface — damped, no bob
+			velocity = horiz_vel + surface_normal * v_up
+		else:
+			v_up = maxf(v_up - SINK_ACCEL * delta, -SINK_MAX)  # sink by default
+			velocity = horiz_vel + surface_normal * v_up
 
 		move_and_slide()
 
@@ -429,3 +483,42 @@ func _planet_radius() -> float:
 func _project_to_plane(v: Vector3, normal: Vector3) -> Vector3:
 	var projected := v - v.dot(normal) * normal
 	return projected.normalized() if projected.length() > 0.001 else Vector3.ZERO
+
+
+# Aim the player's heading along the horizontal projection of `world_dir` (e.g. the
+# direction to the rising sun). The surface basis is rebuilt each physics frame from
+# _surface_right + _yaw; choosing _surface_right = fwd × n makes forward_dir
+# (= n × right) equal `fwd`, so with _yaw = 0 the camera looks straight along it.
+# Called once by World after the build so every run starts facing east into sunrise.
+func face_horizontal(world_dir: Vector3) -> void:
+	var origin: Vector3 = planet.global_position if planet else Vector3.ZERO
+	var n := (global_position - origin).normalized()
+	var fwd := world_dir - world_dir.dot(n) * n
+	if fwd.length() < 0.001:
+		return  # world_dir is straight up/down — no meaningful heading
+	fwd = fwd.normalized()
+	_surface_right = fwd.cross(n)
+	_yaw = 0.0
+
+
+# True when there's a climbable ledge in the player's look direction `fwd` (a unit
+# tangent). Probes the column a short way ahead by casting straight down and finding
+# its solid top; if that top sits within the climb window relative to the feet
+# ([STEP_MIN_DOWN, STEP_MAX_UP]) it's something we can haul out onto — a shore bank
+# or a shallow shelf a block or two under the surface. Over open water the only
+# solid ahead is the distant seafloor, far below the window, so this stays quiet.
+# Tall cliffs put their top above STEP_MAX_UP and are likewise left un-climbable.
+func _can_step_out(fwd: Vector3, surface_normal: Vector3) -> bool:
+	if not planet:
+		return false
+	var space := get_world_3d().direct_space_state
+	var ahead := global_position + fwd * STEP_REACH
+	var from := ahead + surface_normal * 2.5
+	var to := ahead - surface_normal * 3.0
+	var q := PhysicsRayQueryParameters3D.create(from, to)
+	q.exclude = [get_rid()]
+	var hit := space.intersect_ray(q)
+	if hit.is_empty():
+		return false
+	var rise: float = (Vector3(hit["position"]) - global_position).dot(surface_normal)
+	return rise >= STEP_MIN_DOWN and rise <= STEP_MAX_UP

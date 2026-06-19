@@ -60,8 +60,9 @@ var _chunk_col_shapes := {}  # int key → CollisionShape3D, one per chunk
 # off to the inner shell (depth 0) so coastal pools drain into the subsurface;
 # otherwise it spreads sideways into same-level air. Never flows upward. Dig
 # events seed the frontier; a Timer drains it so water creeps in over time.
-const FLOW_HZ := 10.0  # settling ticks per second
-const FLOW_PER_TICK := 64  # max cells processed per tick (per face)
+const FLOW_HZ := 6.0  # settling ticks per second
+const FLOW_PER_TICK := 8  # max cells processed per tick (per face) — low so a dug
+# pocket fills with a visible creep instead of snapping full instantly
 var _flow_timer: Timer = null
 var _active_water := {}  # gk → [c, r, d]  (membership + payload)
 var _active_order: Array = []  # FIFO of gk for round-robin draining

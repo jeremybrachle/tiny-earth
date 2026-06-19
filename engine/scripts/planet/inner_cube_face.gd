@@ -49,8 +49,9 @@ var _opened_columns := {}  # gi key → true for columns with outer shell fully 
 # level air; never flow upward. Bounded to depth [0, MAX_FLOW_DEPTH] so the
 # hollow centre stays dry. The ocean is an infinite source (water cells are
 # never removed) — communicating-vessel fill, not conservative finite volume.
-const FLOW_HZ := 10.0  # settling ticks per second
-const FLOW_PER_TICK := 64  # max cells processed per tick (per face)
+const FLOW_HZ := 6.0  # settling ticks per second
+const FLOW_PER_TICK := 8  # max cells processed per tick (per face) — low so a dug
+# pocket fills with a visible creep instead of snapping full instantly
 const MAX_FLOW_DEPTH := 15  # never fill deeper than this (keep centre dry)
 var _flow_timer: Timer = null
 var _active_water := {}  # gk → [c, r, d]  (membership + payload)
