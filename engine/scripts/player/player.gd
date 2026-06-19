@@ -268,15 +268,17 @@ func _physics_process(delta: float) -> void:
 			Basis(Vector3.RIGHT, pitch_rad), Vector3(0.0, 1.6, 0.0) + bob_offset
 		)
 	else:
-		# TODO(bug): third-person aim is inconsistent — a downward mouse move can
-		# pitch the camera up OR down depending on the current yaw. The vertical
-		# rotation is built around the fixed world axis Vector3.RIGHT instead of the
-		# yaw-rotated surface-tangent right axis, so it doesn't track orientation the
-		# way first-person (which is correct) does. Fix: rotate about the actual
-		# surface-aligned right vector. Tracked in HANDOFF misc bugs.
-		var horiz := Basis(surface_normal, deg_to_rad(_yaw))
-		var vert := Basis(Vector3.RIGHT, pitch_rad)
-		var offset := horiz * (vert * Vector3(0.0, TP_HEIGHT, TP_DISTANCE))
+		# Third-person: build the camera offset purely in the player's LOCAL frame,
+		# exactly like first-person does. The body's global_basis is already surface-
+		# aligned and yaw-rotated (set above), so the camera — its child — inherits the
+		# heading automatically. The old code re-applied yaw via Basis(surface_normal,
+		# _yaw) AND pitched about the world axis Vector3.RIGHT, mixing world and local
+		# frames; that made a downward mouse move read as up/down/left/right depending
+		# on the current heading. Here pitch is about the LOCAL right (x) axis and no
+		# yaw is re-applied, so aiming is consistent at every heading and latitude.
+		# Local +y is the surface normal, local +z is "behind" the player, so the base
+		# offset sits the camera up-and-back; pitch swings it around the player.
+		var offset := Basis(Vector3.RIGHT, pitch_rad) * Vector3(0.0, TP_HEIGHT, TP_DISTANCE)
 		camera.transform = Transform3D(Basis.IDENTITY, offset + bob_offset)
 		# Camera collision ("spring arm"): if solid sits between the player's head
 		# and the desired 3rd-person camera spot, pull the camera in to the hit
