@@ -36,6 +36,10 @@ func _build_ui() -> void:
 
 	_spawn_page = _new_page()
 	_build_spawn_page(_spawn_page)
+	# The spawn page's tall stack (heading + hint + 7 locations + Back) otherwise
+	# sits low in the frame; lift it so the whole column reads as centered.
+	_spawn_page.offset_top -= 50.0
+	_spawn_page.offset_bottom -= 50.0
 	add_child(_spawn_page)
 	_spawn_page.visible = false
 
@@ -57,6 +61,13 @@ const _GLOBE_START_YAW_DEG := -180.0
 # enough off-screen-vertical to look wrong on the menu; a gentle lean reads better.
 const _GLOBE_TILT_DEG := 10.0
 var _globe: Node3D = null
+
+# Slow celestial drift for the menu starfield (no day/night cycle here). Much
+# slower than the globe spin so the backdrop feels alive without distracting from
+# the menu — a full turn takes ~6 minutes. Drives the sky shader's sky_rotation.
+const _SKY_DRIFT_DEG_PER_SEC := 1.0
+var _sky_mat: ShaderMaterial = null
+var _sky_rotation := 0.0
 
 
 func _build_planet_backdrop() -> void:
@@ -89,6 +100,7 @@ func _build_planet_backdrop() -> void:
 		var sky_mat := ShaderMaterial.new()
 		sky_mat.shader = sky_shader
 		sky_mat.set_shader_parameter("planet_radius", 1.0)
+		_sky_mat = sky_mat
 		var sky := Sky.new()
 		sky.sky_material = sky_mat
 		env.background_mode = Environment.BG_SKY
@@ -151,6 +163,9 @@ func _build_planet_backdrop() -> void:
 func _process(delta: float) -> void:
 	if _globe:
 		_globe.rotate_y(deg_to_rad(_GLOBE_SPIN_DEG_PER_SEC) * delta)
+	if _sky_mat:
+		_sky_rotation += deg_to_rad(_SKY_DRIFT_DEG_PER_SEC) * delta
+		_sky_mat.set_shader_parameter("sky_rotation", _sky_rotation)
 
 
 # A menu button with a translucent dark panel + hover/press states, readable over
@@ -231,20 +246,18 @@ func _build_main_page(box: VBoxContainer) -> void:
 
 
 func _build_spawn_page(box: VBoxContainer) -> void:
+	# Top spacer fills the room the (now removed) hint used to take, so the buttons
+	# stay put while the heading sits lower — more centered over the picker.
+	var top_spacer := Control.new()
+	top_spacer.custom_minimum_size = Vector2(0, 44)
+	box.add_child(top_spacer)
+
 	var heading := Label.new()
 	heading.text = "Choose a starting location"
 	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	heading.add_theme_font_size_override("font_size", 30)
 	_add_label_outline(heading, 6)
 	box.add_child(heading)
-
-	var hint := Label.new()
-	hint.text = "Where on Earth do you want to wake up? You'll spawn here for the whole run."
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	hint.add_theme_color_override("font_color", Color(0.78, 0.84, 0.94))
-	_add_label_outline(hint, 5)
-	box.add_child(hint)
 
 	var spacer := Control.new()
 	spacer.custom_minimum_size = Vector2(0, 12)

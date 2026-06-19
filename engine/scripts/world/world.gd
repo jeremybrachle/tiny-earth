@@ -3,6 +3,10 @@ extends Node3D
 @onready var _world_env: WorldEnvironment = $WorldEnvironment
 @onready var _sun: DirectionalLight3D = $DirectionalLight3D
 
+# Sky shader material, kept so the day/night cycle can rotate the star sphere with
+# the sun (sky_rotation uniform). Set in _setup_sky.
+var _sky_mat: ShaderMaterial = null
+
 # Loading overlay (built in code, lives in this scene) shown while the planet
 # assembles progressively. Kept deliberately minimal — a bottom-anchored label +
 # progress bar — so the planet blooming in behind it stays visible.
@@ -83,6 +87,10 @@ func _process(delta: float) -> void:
 func _apply_sun_direction() -> void:
 	var sun_dir := Vector3(cos(_sun_angle), 0.0, sin(_sun_angle))
 	_sun.look_at_from_position(Vector3.ZERO, -sun_dir, Vector3.UP)
+	# The star sphere is intentionally left STATIONARY in-game (sky_rotation untouched).
+	# Rotating it with the sun is physically correct but reads as distracting; the
+	# stars still shift as the player walks the planet (that's view direction, not
+	# sky rotation). The slow menu drift is unaffected (driven from main_menu.gd).
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -98,6 +106,7 @@ func _setup_sky() -> void:
 		return
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
+	_sky_mat = mat
 
 	# Pass planet radius so altitude-based atmosphere thinning works correctly.
 	# VoxelPlanet._ready() runs before World._ready() (children before parent),
@@ -168,7 +177,12 @@ func _setup_sun() -> void:
 	# Sun stays off through the loading screen — the space view of the building
 	# planet is lit only by ambient, with no day/night sweep. It's switched on in
 	# _on_build_finished, oriented to dawn at the player's spawn (see _start_build).
+	# visible = false stops it lighting the scene, but Godot still feeds the light to
+	# the sky shader as LIGHT0 (drawing the sun disc/corona). Gate that off in the sky
+	# shader too via the sun_visible uniform until the build finishes.
 	_sun.visible = false
+	if _sky_mat:
+		_sky_mat.set_shader_parameter("sun_visible", 0.0)
 
 
 # --- Progressive build + loading overlay -----------------------------------
@@ -301,7 +315,10 @@ func _on_build_finished() -> void:
 	_building = false
 	# Sun on now that the player takes control, oriented to dawn at the spawn
 	# (_sun_angle was set in _start_build) so the very first lit frame is correct.
+	# Re-enable the sun disc/corona in the sky shader so it reappears, rising east.
 	_sun.visible = true
+	if _sky_mat:
+		_sky_mat.set_shader_parameter("sun_visible", 1.0)
 	_apply_sun_direction()
 	var player := get_node_or_null("Player") as Node3D
 	if player:
