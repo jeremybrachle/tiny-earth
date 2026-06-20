@@ -96,16 +96,31 @@ func _build_inner_sphere() -> void:
 	var sphere := SphereMesh.new()
 	sphere.radius = _inner_r
 	sphere.height = _inner_r * 2.0
+	# Higher tessellation so the core silhouette + UV mapping stay crisp up close
+	# (defaults 64/32 visibly facet a sphere this large).
+	sphere.radial_segments = 128
+	sphere.rings = 64
 	mesh_inst.mesh = sphere
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	# Recolour the biome map into the ceiling's MAT_COLORS palette so the core
+	# globe reads as the same subterranean under-world as the cavity ceiling
+	# (inner_globe.gdshader; classification is unshaded + NEAREST-filtered, so it
+	# stays crisp + blocky). The menu globe (main_menu.gd) keeps the bright Earth.
 	var tex := load("res://planet/earth_biome_map.png") as Texture2D
 	if tex:
-		mat.albedo_color = Color.WHITE
-		mat.albedo_texture = tex
+		var smat := ShaderMaterial.new()
+		smat.shader = load("res://shaders/inner_globe.gdshader") as Shader
+		smat.set_shader_parameter("biome_tex", tex)
+		mesh_inst.material_override = smat
+		# TEMPORARY live palette tuner (F3). Debug builds only.
+		if OS.is_debug_build():
+			var dbg := preload("res://scripts/ui/inner_globe_debug.gd").new()
+			add_child(dbg)
+			dbg.setup(smat)
 	else:
-		mat.albedo_color = Color(0.45, 0.42, 0.40)
-	mesh_inst.material_override = mat
+		var fallback := StandardMaterial3D.new()
+		fallback.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		fallback.albedo_color = Color(0.45, 0.42, 0.40)
+		mesh_inst.material_override = fallback
 	# SphereMesh UV seam is at local -Z. With +90° Y, local -Z → world -X = lon 180°
 	# which matches the antimeridian (left/right edge of our equirectangular texture).
 	# Adjust rotation_degrees.y if continents appear rotated; use 45° increments.

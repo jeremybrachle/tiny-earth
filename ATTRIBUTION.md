@@ -32,6 +32,31 @@ Köppen-Geiger 1 km raster. Attribution per CC BY 4.0:
 
 Dataset (figshare): https://figshare.com/ndownloader/files/12407516
 
+### HYG Database (v4.1) — David Nash / astronexus
+**CC BY-SA 4.0 — attribution + share-alike required.**
+https://creativecommons.org/licenses/by-sa/4.0/
+
+The night-sky star map (`engine/planet/star_map.png`, baked by
+`pipeline/src/starmap.py`) is rendered from real star positions, magnitudes, and
+B-V colours in the HYG database, which compiles the Hipparcos, Yale Bright Star,
+and Gliese catalogs. As a derivative work it is likewise CC BY-SA 4.0.
+
+> The HYG Database, compiled by David Nash. https://www.astronexus.com/hyg
+
+Repository: https://codeberg.org/astronexus/hyg
+(GitHub mirror: https://github.com/astronexus/HYG-Database)
+
+### NASA Night Lights ("Earth's City Lights" / Black Marble)
+Public Domain (NASA imagery). No attribution required; credited here as a courtesy.
+https://earthobservatory.nasa.gov/images/55167/earths-city-lights · https://www.visibleearth.nasa.gov/
+
+The cavity ceiling's land-tile "city lights" (`engine/planet/city_lights.png`,
+fetched by `pipeline/src/citylights.py`) are sampled from NASA night-lights
+imagery:
+- **"Earth's City Lights"** (default) — DMSP, data courtesy Marc Imhoff (NASA GSFC)
+  and Christopher Elvidge (NOAA NGDC); image by Craig Mayhew and Robert Simmon (NASA GSFC).
+- **Black Marble 2016** (`--blackmarble`) — NASA Earth Observatory (VIIRS / Suomi NPP).
+
 ---
 
 ## Audio

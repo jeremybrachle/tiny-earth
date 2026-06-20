@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://trmitm8u2ohw"
-path="res://.godot/imported/earth_biome_map.png-f56de8ed66d79dda8053b9e51931d0cf.ctex"
+uid="uid://b3vhqnngfemry"
+path="res://.godot/imported/star_map.png-13b4b31b76fcda4b6ee4a2e69cac2f06.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://planet/earth_biome_map.png"
-dest_files=["res://.godot/imported/earth_biome_map.png-f56de8ed66d79dda8053b9e51931d0cf.ctex"]
+source_file="res://planet/star_map.png"
+dest_files=["res://.godot/imported/star_map.png-13b4b31b76fcda4b6ee4a2e69cac2f06.ctex"]
 
 [params]
 

@@ -15,18 +15,23 @@ var planet_radius: float = 256.0
 var face_id: int = 0
 var chunks_per_edge: int = 16
 
+# Inner-shell palette — deliberately MUTED vs the outer surface (cube_face.gd):
+# pulled toward grey and a touch darker so the cavity reads as a dim, subterranean
+# under-world rather than a second bright Earth. The blue is a desaturated slate
+# (less vivid than the outer ocean), and the ocean CEILING (mat 11) is darker still
+# so the projected starfield reads against it (see inner_voxel.gdshader).
 const MAT_COLORS := {
-	1: Color(0.25, 0.55, 0.20),  # Land fallback
-	2: Color(0.10, 0.35, 0.65),  # Ocean / water body
-	3: Color(0.85, 0.75, 0.45),  # Desert/Sand
-	4: Color(0.40, 0.65, 0.25),  # Temperate
-	5: Color(0.15, 0.40, 0.15),  # Forest
-	6: Color(0.90, 0.93, 0.97),  # Snow/Ice
-	7: Color(0.10, 0.48, 0.12),  # Tropical
-	8: Color(0.68, 0.62, 0.22),  # Savanna
-	9: Color(0.52, 0.48, 0.44),  # Rock/Mountain
-	10: Color(0.28, 0.22, 0.16),  # Seafloor
-	11: Color(0.10, 0.35, 0.65),  # Ocean ceiling (solid stand-in for mat 2 at depth 15)
+	1: Color(0.17, 0.25, 0.15),  # Land fallback
+	2: Color(0.10, 0.18, 0.27),  # Ocean / water body (muted slate — water mesh uses its own shader)
+	3: Color(0.40, 0.37, 0.27),  # Desert/Sand
+	4: Color(0.21, 0.30, 0.17),  # Temperate
+	5: Color(0.13, 0.21, 0.13),  # Forest
+	6: Color(0.40, 0.44, 0.49),  # Snow/Ice (muted grey-blue — no white tint on the ceiling)
+	7: Color(0.12, 0.25, 0.14),  # Tropical
+	8: Color(0.33, 0.31, 0.20),  # Savanna
+	9: Color(0.25, 0.24, 0.22),  # Rock/Mountain
+	10: Color(0.16, 0.14, 0.12),  # Seafloor
+	11: Color(0.04, 0.08, 0.15),  # Ocean ceiling (dark slate — starfield backdrop)
 }
 
 var _mat: Material = null
@@ -71,6 +76,20 @@ func _ready() -> void:
 func init_face() -> void:
 	_mat = ShaderMaterial.new()
 	(_mat as ShaderMaterial).shader = load("res://shaders/inner_voxel.gdshader") as Shader
+	# Same baked real star map as the sky → the ocean-ceiling projection shows the
+	# identical constellations. The file_exists guard avoids load() errors before
+	# the maps are baked (starmap.py / citylights.py) — the shaders just show no
+	# stars/cities until then.
+	if FileAccess.file_exists("res://planet/star_map.png"):
+		var star_tex := load("res://planet/star_map.png") as Texture2D
+		if star_tex:
+			(_mat as ShaderMaterial).set_shader_parameter("star_map", star_tex)
+	# Real night-lights for the land ceiling tiles, sampled by geographic direction
+	# so cities land on the real continents.
+	if FileAccess.file_exists("res://planet/city_lights.png"):
+		var city_tex := load("res://planet/city_lights.png") as Texture2D
+		if city_tex:
+			(_mat as ShaderMaterial).set_shader_parameter("city_tex", city_tex)
 	_water_mat = ShaderMaterial.new()
 	(_water_mat as ShaderMaterial).shader = load("res://shaders/water.gdshader") as Shader
 
@@ -225,7 +244,8 @@ func _emit_radial_face(
 	v1: float,
 	r: float,
 	color: Color,
-	outward: bool
+	outward: bool,
+	ceiling_uv2: Vector2 = Vector2.ZERO
 ) -> void:
 	var p00 := _CubeFaceScript.face_uv_to_unit(face_id, u0, v0) * r
 	var p10 := _CubeFaceScript.face_uv_to_unit(face_id, u1, v0) * r
@@ -235,6 +255,10 @@ func _emit_radial_face(
 	if not outward:
 		normal = -normal
 	st.set_color(color)
+	# Ceiling tag for inner_voxel.gdshader. x: 0 = plain, 1 = land (city lights),
+	# 2 = ocean (starfield). y: per-tile random seed for the land light. Persists
+	# across the add_vertex calls below.
+	st.set_uv2(ceiling_uv2)
 	if (p10 - p00).cross(p11 - p00).dot(normal) > 0.0:
 		st.set_uv(Vector2(0, 0))
 		st.add_vertex(p00)
@@ -313,6 +337,7 @@ func _emit_side_face(
 	var expected_out := out_pt - mid_pt
 
 	st.set_color(color)
+	st.set_uv2(Vector2.ZERO)  # side walls are never ceiling — plain shading
 	if (pa_top - pa_base).cross(pb_top - pa_base).dot(expected_out) > 0.0:
 		st.set_uv(Vector2(0, 0))
 		st.add_vertex(pa_base)
@@ -383,7 +408,14 @@ func _add_chunk_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int, cy: 
 				# (the cavity beneath the deepest rock, or an excavated pocket).
 				if not _is_solid_at(cx, cy, data, lc, lr, depth + 1):
 					var under := Color(color.r * 0.5, color.g * 0.5, color.b * 0.5, color.a)
-					_emit_radial_face(st, u0, v0, u1, v1, r_in, under, false)
+					# Only the innermost layer (depth 15) IS the cavity ceiling: tag it
+					# (UV2.x) so inner_voxel.gdshader lights it — land → warm city lights
+					# (1), ocean (mat 10/11) → cool star projection (2). Both share one
+					# twinkling field, coloured per tile. Dug interior walls stay plain.
+					var ceiling_uv2 := Vector2.ZERO
+					if depth == CHUNK_SIZE - 1:
+						ceiling_uv2 = Vector2(2.0, 0.0) if (m == 10 or m == 11) else Vector2(1.0, 0.0)
+					_emit_radial_face(st, u0, v0, u1, v1, r_in, under, false, ceiling_uv2)
 
 				# Four lateral faces — exposed where the side neighbour is open.
 				for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:

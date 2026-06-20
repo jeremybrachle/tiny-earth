@@ -114,6 +114,13 @@ func _setup_sky() -> void:
 	mat.shader = shader
 	_sky_mat = mat
 
+	# Real night sky baked by pipeline/src/starmap.py. If it hasn't been baked yet
+	# the sampler is simply unbound (black sky, no crash) until star_map.png exists.
+	if FileAccess.file_exists("res://planet/star_map.png"):
+		var star_tex := load("res://planet/star_map.png") as Texture2D
+		if star_tex:
+			mat.set_shader_parameter("star_map", star_tex)
+
 	# Pass planet radius so altitude-based atmosphere thinning works correctly.
 	# VoxelPlanet._ready() runs before World._ready() (children before parent),
 	# so planet_radius is already populated from planet_config.json by this point.
@@ -123,6 +130,10 @@ func _setup_sky() -> void:
 
 	var sky := Sky.new()
 	sky.sky_material = mat
+	# Cheap incremental updates during the loading build (a full per-frame sky pass on
+	# top of the heavy meshing was glitching). Switched to REALTIME in
+	# _on_build_finished so the in-game star twinkle animates smoothly.
+	sky.process_mode = Sky.PROCESS_MODE_INCREMENTAL
 	_world_env.environment.sky = sky
 	_world_env.environment.background_mode = Environment.BG_SKY
 
@@ -190,6 +201,9 @@ func _setup_sun() -> void:
 	_sun.visible = true
 	if _sky_mat:
 		_sky_mat.set_shader_parameter("sun_visible", 0.0)
+		# Freeze the star twinkle during the loading build — the per-frame sky
+		# re-render on top of the heavy meshing was glitching on some machines.
+		_sky_mat.set_shader_parameter("star_twinkle_enable", 0.0)
 
 
 # --- Progressive build + loading overlay -----------------------------------
@@ -340,6 +354,12 @@ func _on_build_finished() -> void:
 	_sun.visible = true
 	if _sky_mat:
 		_sky_mat.set_shader_parameter("sun_visible", 1.0)
+		_sky_mat.set_shader_parameter("star_twinkle_enable", 1.0)  # twinkle on in-game
+	# Now that the heavy build is done, re-render the sky every frame so the twinkle
+	# animates (kept INCREMENTAL during the build to spare the loading framerate).
+	var sky := _world_env.environment.sky
+	if sky:
+		sky.process_mode = Sky.PROCESS_MODE_REALTIME
 	_apply_sun_direction()
 	var player := get_node_or_null("Player") as Node3D
 	if player:

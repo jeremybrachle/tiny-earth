@@ -100,6 +100,11 @@ func _build_planet_backdrop() -> void:
 		var sky_mat := ShaderMaterial.new()
 		sky_mat.shader = sky_shader
 		sky_mat.set_shader_parameter("planet_radius", 1.0)
+		sky_mat.set_shader_parameter("star_twinkle_enable", 0.0)  # steady stars on the menu
+		if FileAccess.file_exists("res://planet/star_map.png"):
+			var star_tex := load("res://planet/star_map.png") as Texture2D
+			if star_tex:
+				sky_mat.set_shader_parameter("star_map", star_tex)
 		_sky_mat = sky_mat
 		var sky := Sky.new()
 		sky.sky_material = sky_mat
