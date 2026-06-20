@@ -30,6 +30,12 @@ var _obs_cam: Camera3D = null
 # faceted-normal lighting discontinuity) or stays fixed (a UV/texture artifact).
 const _DAY_LENGTH_SEC := 120.0  # real seconds per full revolution at 1×
 const _TIME_SCALES := [0.0, 1.0, 10.0, 60.0]
+# How far BELOW the eastern horizon the sun starts, in degrees of extra westward
+# trail beyond the 90° dawn offset. 0 = exactly on the horizon; a few degrees opens
+# the run with the sun just under the horizon so it visibly rises. The on-screen
+# elevation is shallower than this at high latitudes (≈ asin(cos(lat)·sin(this))):
+# at the Alps (~46°N) 12° reads as ~8° below. Raise for a longer pre-dawn.
+const _DAWN_DEPRESSION_DEG := 12.0
 var _time_scale_idx := 1
 var _sun_angle := 0.0
 
@@ -174,13 +180,14 @@ func _setup_sun() -> void:
 	_sun.shadow_enabled = true
 	_sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 	_sun.directional_shadow_max_distance = 600.0
-	# Sun stays off through the loading screen — the space view of the building
-	# planet is lit only by ambient, with no day/night sweep. It's switched on in
-	# _on_build_finished, oriented to dawn at the player's spawn (see _start_build).
-	# visible = false stops it lighting the scene, but Godot still feeds the light to
-	# the sky shader as LIGHT0 (drawing the sun disc/corona). Gate that off in the sky
-	# shader too via the sun_visible uniform until the build finishes.
-	_sun.visible = false
+	# The sun stays ON through the loading screen so the building planet is actually
+	# lit (ambient-only read far too dark). _start_build orients it to graze the
+	# globe from the observation-camera side; _on_build_finished re-points it to the
+	# gameplay dawn direction. What we DON'T want back on the loading screen is the
+	# bright sky disc/corona — visible=false didn't suppress that anyway (Godot still
+	# feeds the light to the sky shader as LIGHT0). So we light with the real light
+	# but gate the disc off via the sun_visible uniform, flipped to 1 on finish.
+	_sun.visible = true
 	if _sky_mat:
 		_sky_mat.set_shader_parameter("sun_visible", 0.0)
 
@@ -203,16 +210,30 @@ func _start_build() -> void:
 	# chosen on the menu — see SpawnPoints / player.gd _ready()).
 	var spawn_pos: Vector3 = player.global_position if player else Vector3(0.0, planet_r, 0.0)
 	# Start every run at dawn wherever the player spawns: put the subsolar point a
-	# quarter-turn (90°) east of the spawn longitude so the sun begins on the horizon
-	# and climbs as the day/night cycle advances. The spawn's longitude angle in the
-	# X-Z plane is atan2(z, x); the sun is overhead at +sun_dir, so we trail it 90°.
-	_sun_angle = atan2(spawn_pos.z, spawn_pos.x) - PI / 2.0
+	# quarter-turn (90°) east of the spawn longitude so the sun begins on the horizon,
+	# plus a small extra trail (_DAWN_DEPRESSION_DEG) so it starts JUST BELOW the
+	# eastern horizon and visibly rises as the day/night cycle advances. The spawn's
+	# longitude angle in the X-Z plane is atan2(z, x); the sun is overhead at
+	# +sun_dir, so we trail it 90° + the depression.
+	_sun_angle = atan2(spawn_pos.z, spawn_pos.x) - PI / 2.0 - deg_to_rad(_DAWN_DEPRESSION_DEG)
 	if player:
 		player.set_physics_process(false)  # no surface yet; also keeps frames free
 		player.set_process_unhandled_input(false)  # don't let a stray click capture the mouse
 		player.visible = false  # hide the capsule; we watch from space
 
 	_setup_observation_camera(spawn_pos, planet_r)
+
+	# Light the assembling globe from the observation-camera side so it reads in 3D
+	# during the loading screen instead of flat ambient. The camera sits along
+	# +spawn_pos (see _setup_observation_camera), so putting the subsolar point near
+	# that direction lights the hemisphere we're watching; a small upward tilt leaves
+	# a soft terminator near the bottom edge rather than dead-flat front lighting.
+	# This is build-time only — _on_build_finished re-points the sun via
+	# _apply_sun_direction() to the gameplay dawn angle. The sky disc stays gated off
+	# (sun_visible uniform = 0, set in _setup_sun) so no bright sun returns here.
+	var build_light_dir := (spawn_pos.normalized() + Vector3.UP * 0.35).normalized()
+	var build_up_ref := Vector3.UP if abs(build_light_dir.dot(Vector3.UP)) < 0.99 else Vector3.FORWARD
+	_sun.look_at_from_position(Vector3.ZERO, -build_light_dir, build_up_ref)
 
 	planet.build_phase.connect(_on_build_phase)
 	planet.build_progress.connect(_on_build_progress)

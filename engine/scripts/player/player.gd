@@ -31,6 +31,11 @@ const PITCH_MIN := -89.0
 const PITCH_MAX := 89.0
 const TP_DISTANCE := 4.0
 const TP_HEIGHT := 1.6
+# Eye height above the feet — matches the first-person camera's local Y. The dig
+# ray and the reticle projection both originate here (see _aim_raycast), NOT from
+# the camera, so a straight-down aim in third-person reaches the block underfoot
+# instead of the one in front (the TP camera sits up-and-back and can't see it).
+const EYE_HEIGHT := 1.6
 
 const _CubeFaceScript = preload("res://scripts/planet/cube_face.gd")
 
@@ -97,11 +102,14 @@ func _ready() -> void:
 	add_child(hud_cl)
 	_crosshair = Label.new()
 	_crosshair.text = "+"
-	_crosshair.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_crosshair.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_crosshair.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# Top-left anchored so we can move it to the dig target each frame (_update_reticle
+	# re-projects the eye-ray's first voxel hit to screen). In first-person the eye and
+	# camera coincide, so the hit projects to screen-centre and the + stays put; in
+	# third-person it drifts toward the player's feet to mark where digging lands.
+	_crosshair.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	_crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_crosshair.add_theme_font_size_override("font_size", 24)
+	_crosshair.position = get_viewport().get_visible_rect().size * 0.5
 	# Hidden until the world finishes building (see on_world_ready); it would
 	# otherwise float over the loading screen. H toggles it off entirely in-game.
 	_crosshair.visible = false
@@ -278,16 +286,29 @@ func _physics_process(delta: float) -> void:
 		# yaw is re-applied, so aiming is consistent at every heading and latitude.
 		# Local +y is the surface normal, local +z is "behind" the player, so the base
 		# offset sits the camera up-and-back; pitch swings it around the player.
-		var offset := Basis(Vector3.RIGHT, pitch_rad) * Vector3(0.0, TP_HEIGHT, TP_DISTANCE)
-		camera.transform = Transform3D(Basis.IDENTITY, offset + bob_offset)
+		# Orient the third-person camera with the SAME local basis as first-person —
+		# pitch about the LOCAL right axis — rather than look_at(head). Two reasons:
+		# (1) look_at over-steepened the view: the camera looks from up-and-back AT the
+		# head, so its real view angle is steeper than _pitch and sailed PAST straight-
+		# down even though _pitch is clamped at -89, gimbal-flipping the roll. (2) Once
+		# the view passed vertical, cam_fwd (= -camera.global_basis.z projected to the
+		# ground, L154) flipped 180deg and reversed the walking direction. With the pitch
+		# basis the view can never exceed -89 (locks just shy of straight down, as the
+		# owner wants) and -camera.global_basis.z stays body_forward * cos(pitch) — same
+		# sign for all pitch in (-90, 90) — so movement never reverses. The body's
+		# global_basis already carries surface-align + yaw, so the child camera inherits
+		# heading; the offset (up + back, pitched the same way) sits it behind the player.
+		var pitch_basis := Basis(Vector3.RIGHT, pitch_rad)
+		var offset := pitch_basis * Vector3(0.0, TP_HEIGHT, TP_DISTANCE)
+		camera.transform = Transform3D(pitch_basis, offset + bob_offset)
 		# Camera collision ("spring arm"): if solid sits between the player's head
 		# and the desired 3rd-person camera spot, pull the camera in to the hit
 		# point so it doesn't clip through walls/ceilings into culled-solid space.
 		# The rock IS solid (same as Minecraft/Luanti) — we just slide the camera
 		# inward rather than letting it show the hollow. Skipped under _noclip so
 		# free hollow-space exploration isn't fought by the camera.
-		var head := global_position + global_basis.y * 1.0
 		if not _noclip:
+			var head := global_position + global_basis.y * 1.0
 			var desired := camera.global_position
 			var space := get_world_3d().direct_space_state
 			var q := PhysicsRayQueryParameters3D.create(head, desired)
@@ -295,7 +316,9 @@ func _physics_process(delta: float) -> void:
 			var chit := space.intersect_ray(q)
 			if not chit.is_empty():
 				camera.global_position = chit.position + (head - desired).normalized() * 0.2
-		camera.look_at(head, global_basis.y)
+
+	# Reticle follows the dig target (camera is now fully positioned above).
+	_update_reticle()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -354,17 +377,72 @@ func _toggle_water() -> void:
 const DIG_REACH := 10.0
 
 
-# Raycast from the camera and remove the voxel the player is aiming at.
-# Works on both the outer shell and inner shell at any depth.
+# Cast the dig ray and return the raw intersect_ray result ({} on a miss). Origin is
+# the EYE (not the camera) along the camera's forward axis, shared by the dig and the
+# reticle so the + always marks the block that will break. Eye-origin lets a
+# straight-down third-person aim reach the voxel directly underfoot — the camera, up
+# and back, can't see it. In first-person the eye and camera coincide, so this is the
+# same ray as before and aiming/digging are unchanged.
+func _aim_raycast() -> Dictionary:
+	if not planet:
+		return {}
+	var space := get_world_3d().direct_space_state
+	var eye := global_position + global_basis.y * EYE_HEIGHT
+	var aim := -camera.global_basis.z
+	var query := PhysicsRayQueryParameters3D.create(eye, eye + aim * DIG_REACH)
+	query.exclude = [get_rid()]
+	return space.intersect_ray(query)
+
+
+# Move the + to the screen point that marks where digging lands. On a miss (or a
+# target behind the camera) it falls back to screen centre. Skipped when hidden.
+func _update_reticle() -> void:
+	if not _crosshair or not _crosshair.visible:
+		return
+	var target = _reticle_target()
+	var screen := get_viewport().get_visible_rect().size * 0.5
+	if target != null and not camera.is_position_behind(target):
+		screen = camera.unproject_position(target)
+	_crosshair.position = screen - _crosshair.size * 0.5
+
+
+# Stable world point for the reticle: where the eye-ray crosses the surface SHELL
+# the player stands on (a sphere of the player's current radius), not the live
+# first-hit voxel. Using the analytic shell keeps the + put when a nearby block is
+# broken — the raycast's first hit would otherwise recede a voxel and, seen from the
+# up-and-back third-person camera, slide the + up the screen (parallax). At the
+# pristine surface this point coincides with the dig target. Inside the hollow (no
+# clean single sphere) or aiming past the dig reach it falls back to the live ray;
+# null means nothing to mark, so the caller centres the +.
+func _reticle_target():
+	if not planet:
+		return null
+	var center := planet.global_position
+	var radius := (global_position - center).length()
+	if radius > _planet_radius() * 0.9:
+		var eye := global_position + global_basis.y * EYE_HEIGHT
+		var aim := -camera.global_basis.z
+		var oc := eye - center
+		var b := oc.dot(aim)
+		var c := oc.dot(oc) - radius * radius
+		var disc := b * b - c
+		if disc >= 0.0:
+			var sq := sqrt(disc)
+			var t := -b - sq
+			if t < 0.0:
+				t = -b + sq
+			if t >= 0.0 and t <= DIG_REACH:
+				return eye + aim * t
+	var hit := _aim_raycast()
+	return hit.position if not hit.is_empty() else null
+
+
+# Raycast from the eye and remove the voxel the player is aiming at (the one the +
+# marks). Works on both the outer shell and inner shell at any depth.
 func _break_voxel_aimed() -> void:
 	if not planet:
 		return
-	var space := get_world_3d().direct_space_state
-	var cam_pos := camera.global_position
-	var cam_fwd := -camera.global_basis.z
-	var query := PhysicsRayQueryParameters3D.create(cam_pos, cam_pos + cam_fwd * DIG_REACH)
-	query.exclude = [get_rid()]
-	var hit := space.intersect_ray(query)
+	var hit := _aim_raycast()
 	if hit.is_empty():
 		return
 
