@@ -1,33 +1,50 @@
 extends CanvasLayer
 
-# TEMPORARY debug overlay to live-tune the inner mini-globe palette
-# (inner_globe.gdshader). Toggle with F3. Drag sliders to change the colours in
-# real time; the panel at the bottom prints copy-paste-ready values to send back
-# so we can lock them into the shader defaults. Only created in debug builds
-# (planet_generator.gd _build_inner_sphere) — delete this file + its instantiation
-# to remove the tool.
+# TEMPORARY debug overlay to live-tune the hollow cavity's look. Toggle with F3.
+# Tunes TWO shaders at once:
+#   • the inner mini-globe palette (inner_globe.gdshader) — ocean/land/snow colours
+#     + overall brightness, on the single globe material passed to setup().
+#   • the cavity ceiling city lights (inner_voxel.gdshader) — colour + brightness/
+#     gain/gamma, pushed across ALL inner faces (looked up lazily via the
+#     "voxel_planet" group, since faces build async after this overlay is created).
+# Each colour is a click-to-pick colour WHEEL (ColorPickerButton), not R/G/B dials.
+# The "Print to console" button dumps copy-paste-ready shader-default lines so we
+# can lock the chosen values into the shaders.
+#
+# Only created in debug builds (planet_generator.gd _build_inner_sphere). Delete
+# this file + its instantiation to remove the tool.
 
-# Defaults must mirror inner_globe.gdshader's uniform defaults so the sliders start
-# where the shader does.
-const FLOATS := {
-	"palette_brightness": [1.0, 0.5, 3.0],
-}
-const COLORS := {
-	"ocean_color": Color(0.05, 0.10, 0.22),
-	"forest_color": Color(0.21, 0.39, 0.22),
-	"temperate_color": Color(0.34, 0.52, 0.30),
-	"savanna_color": Color(0.46, 0.51, 0.30),
-	"desert_color": Color(0.52, 0.47, 0.33),
-	"snow_color": Color(0.60, 0.64, 0.70),
-}
+# target: "globe" → the globe material; "city" → all inner ceiling materials;
+# "stars" → BOTH the ceiling materials AND the sky material (sky_space.gdshader),
+# tuned in lockstep so the cavity ceiling and the real sky agree.
+# Defaults MUST mirror each shader's uniform defaults so the controls start where
+# the shaders do.
+const COLOR_SPECS := [
+	{"name": "city_color", "target": "city", "def": Color(1.000, 0.800, 0.420)},
+]
+const FLOAT_SPECS := [
+	{"name": "palette_brightness", "target": "globe", "def": 1.0, "lo": 0.2, "hi": 3.0},
+	{"name": "city_brightness", "target": "city", "def": 1.38, "lo": 0.0, "hi": 8.0},
+	{"name": "city_gain", "target": "city", "def": 7.35, "lo": 0.5, "hi": 8.0},
+	{"name": "city_gamma", "target": "city", "def": 2.79, "lo": 0.5, "hi": 4.0},
+	# Stars — one slider drives the same uniform on both the ceiling and the sky.
+	# The two shaders ship slightly different brightness defaults (the ceiling reads
+	# darker), so the slider starts at the sky's value; dragging locks them together.
+	{"name": "star_brightness", "target": "stars", "def": 6.0, "lo": 0.0, "hi": 6.0},
+	{"name": "star_twinkle_speed", "target": "stars", "def": 2.19, "lo": 0.0, "hi": 6.0},
+	{"name": "star_twinkle_floor", "target": "stars", "def": 0.04, "lo": 0.0, "hi": 1.0},
+]
 
-var _mat: ShaderMaterial
-var _vals := {}
+var _globe_mat: ShaderMaterial
+var _sky_mat: ShaderMaterial  # sky_space.gdshader, for the shared "Stars" controls
+var _vals := {}  # uniform name → current value
+var _targets := {}  # uniform name → "globe" | "city" | "stars"
 var _summary: Label
 
 
-func setup(mat: ShaderMaterial) -> void:
-	_mat = mat
+func setup(globe_mat: ShaderMaterial, sky_mat: ShaderMaterial = null) -> void:
+	_globe_mat = globe_mat
+	_sky_mat = sky_mat
 	layer = 128
 
 	var panel := PanelContainer.new()
@@ -35,33 +52,46 @@ func setup(mat: ShaderMaterial) -> void:
 	add_child(panel)
 
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(340, 520)
+	scroll.custom_minimum_size = Vector2(360, 560)
 	panel.add_child(scroll)
 
 	var vb := VBoxContainer.new()
-	vb.custom_minimum_size.x = 320
+	vb.custom_minimum_size.x = 340
 	scroll.add_child(vb)
 
 	var title := Label.new()
-	title.text = "Inner-globe palette  —  F3 to toggle"
+	title.text = "Cavity tuner  —  F3 to toggle"
 	vb.add_child(title)
 
-	for fname in FLOATS:
-		var spec: Array = FLOATS[fname]
-		_vals[fname] = spec[0]
-		_mat.set_shader_parameter(fname, spec[0])
-		_add_float_row(vb, fname, spec[0], spec[1], spec[2])
+	_add_header(vb, "Globe palette")
+	for spec in COLOR_SPECS:
+		if spec["target"] == "globe":
+			_add_color_row(vb, spec)
+	for spec in FLOAT_SPECS:
+		if spec["target"] == "globe":
+			_add_float_row(vb, spec)
 
-	for cname in COLORS:
-		var col: Color = COLORS[cname]
-		_vals[cname] = col
-		_mat.set_shader_parameter(cname, col)
-		for comp in 3:
-			_add_color_row(vb, cname, comp)
+	_add_header(vb, "City lights (ceiling)")
+	for spec in COLOR_SPECS:
+		if spec["target"] == "city":
+			_add_color_row(vb, spec)
+	for spec in FLOAT_SPECS:
+		if spec["target"] == "city":
+			_add_float_row(vb, spec)
 
-	var copy_lbl := Label.new()
-	copy_lbl.text = "\n— copy these back —"
-	vb.add_child(copy_lbl)
+	_add_header(vb, "Stars (sky + ceiling)")
+	for spec in COLOR_SPECS:
+		if spec["target"] == "stars":
+			_add_color_row(vb, spec)
+	for spec in FLOAT_SPECS:
+		if spec["target"] == "stars":
+			_add_float_row(vb, spec)
+
+	var copy_btn := Button.new()
+	copy_btn.text = "Print values to console"
+	copy_btn.pressed.connect(_print_to_console)
+	vb.add_child(copy_btn)
+
 	_summary = Label.new()
 	_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(_summary)
@@ -70,15 +100,54 @@ func setup(mat: ShaderMaterial) -> void:
 	visible = false  # start hidden so it doesn't grab the mouse on spawn
 
 
-func _add_float_row(vb: VBoxContainer, fname: String, val: float, lo: float, hi: float) -> void:
+func _add_header(vb: VBoxContainer, text: String) -> void:
+	var lbl := Label.new()
+	lbl.text = "\n— %s —" % text
+	vb.add_child(lbl)
+
+
+func _add_color_row(vb: VBoxContainer, spec: Dictionary) -> void:
+	var cname: String = spec["name"]
+	var col: Color = spec["def"]
+	_vals[cname] = col
+	_targets[cname] = spec["target"]
+
+	var hb := HBoxContainer.new()
+	var lbl := Label.new()
+	lbl.text = cname
+	lbl.custom_minimum_size.x = 150
+	hb.add_child(lbl)
+
+	var cpb := ColorPickerButton.new()
+	cpb.color = col
+	cpb.edit_alpha = false
+	cpb.custom_minimum_size = Vector2(150, 26)
+	hb.add_child(cpb)
+	# Show the popup as a colour WHEEL (click the exact hue) rather than rectangles.
+	var picker := cpb.get_picker()
+	picker.picker_shape = ColorPicker.SHAPE_HSV_WHEEL
+	picker.edit_alpha = false
+	cpb.color_changed.connect(func(c: Color) -> void:
+		_vals[cname] = c
+		_apply(cname, c)
+		_update_summary())
+	vb.add_child(hb)
+
+
+func _add_float_row(vb: VBoxContainer, spec: Dictionary) -> void:
+	var fname: String = spec["name"]
+	var val: float = spec["def"]
+	_vals[fname] = val
+	_targets[fname] = spec["target"]
+
 	var hb := HBoxContainer.new()
 	var lbl := Label.new()
 	lbl.text = fname
-	lbl.custom_minimum_size.x = 140
+	lbl.custom_minimum_size.x = 150
 	hb.add_child(lbl)
 	var s := HSlider.new()
-	s.min_value = lo
-	s.max_value = hi
+	s.min_value = spec["lo"]
+	s.max_value = spec["hi"]
 	s.step = 0.01
 	s.value = val
 	s.custom_minimum_size.x = 120
@@ -89,53 +158,74 @@ func _add_float_row(vb: VBoxContainer, fname: String, val: float, lo: float, hi:
 	hb.add_child(vlbl)
 	s.value_changed.connect(func(v: float) -> void:
 		_vals[fname] = v
-		_mat.set_shader_parameter(fname, v)
+		_apply(fname, v)
 		vlbl.text = "%.2f" % v
 		_update_summary())
 	vb.add_child(hb)
 
 
-func _add_color_row(vb: VBoxContainer, cname: String, comp: int) -> void:
-	var comp_name: String = ["R", "G", "B"][comp]
-	var col: Color = _vals[cname]
-	var val: float = col[comp]
-	var hb := HBoxContainer.new()
-	var lbl := Label.new()
-	lbl.text = "%s.%s" % [cname, comp_name]
-	lbl.custom_minimum_size.x = 140
-	hb.add_child(lbl)
-	var s := HSlider.new()
-	s.min_value = 0.0
-	s.max_value = 1.0
-	s.step = 0.005
-	s.value = val
-	s.custom_minimum_size.x = 120
-	hb.add_child(s)
-	var vlbl := Label.new()
-	vlbl.text = "%.3f" % val
-	vlbl.custom_minimum_size.x = 48
-	hb.add_child(vlbl)
-	s.value_changed.connect(func(v: float) -> void:
-		var c: Color = _vals[cname]
-		match comp:
-			0: c.r = v
-			1: c.g = v
-			2: c.b = v
-		_vals[cname] = c
-		_mat.set_shader_parameter(cname, c)
-		vlbl.text = "%.3f" % v
-		_update_summary())
-	vb.add_child(hb)
+# Push a uniform to the right material(s): the single globe material; every inner
+# ceiling material (resolved lazily — faces build after this overlay); or, for the
+# shared star controls, BOTH the ceiling materials and the sky material at once.
+func _apply(uname: String, value: Variant) -> void:
+	var target: String = _targets[uname]
+	if target == "globe":
+		if _globe_mat:
+			_globe_mat.set_shader_parameter(uname, value)
+		return
+	# "city" and "stars" both reach the ceiling materials; "stars" also reaches the sky.
+	for m in _city_materials():
+		m.set_shader_parameter(uname, value)
+	if target == "stars" and _sky_mat:
+		_sky_mat.set_shader_parameter(uname, value)
+
+
+func _city_materials() -> Array:
+	var vp := get_tree().get_first_node_in_group("voxel_planet")
+	if vp and vp.has_method("get_inner_materials"):
+		return vp.get_inner_materials()
+	return []
 
 
 func _update_summary() -> void:
+	_summary.text = _format_values()
+
+
+func _print_to_console() -> void:
+	print("\n=== Cavity tuner values (paste into shaders) ===")
+	print("--- inner_globe.gdshader ---")
+	for spec in COLOR_SPECS:
+		if spec["target"] == "globe":
+			print(_uniform_line(spec["name"]))
+	for spec in FLOAT_SPECS:
+		if spec["target"] == "globe":
+			print(_uniform_line(spec["name"]))
+	print("--- inner_voxel.gdshader ---")
+	for spec in COLOR_SPECS:
+		if spec["target"] == "city":
+			print(_uniform_line(spec["name"]))
+	for spec in FLOAT_SPECS:
+		if spec["target"] == "city":
+			print(_uniform_line(spec["name"]))
+	print("--- stars → sky_space.gdshader AND inner_voxel.gdshader ---")
+	for spec in FLOAT_SPECS:
+		if spec["target"] == "stars":
+			print(_uniform_line(spec["name"]))
+	print("================================================\n")
+
+
+func _format_values() -> String:
 	var txt := ""
-	for fname in FLOATS:
-		txt += "%s = %.2f\n" % [fname, _vals[fname]]
-	for cname in COLORS:
-		var c: Color = _vals[cname]
-		txt += "%s = vec3(%.3f, %.3f, %.3f)\n" % [cname, c.r, c.g, c.b]
-	_summary.text = txt
+	for uname in _vals:
+		txt += _uniform_line(uname) + "\n"
+	return txt
+
+
+func _uniform_line(uname: String) -> String:
+	var v: Variant = _vals[uname]
+	if v is Color:
+		return "%s = vec3(%.3f, %.3f, %.3f);" % [uname, v.r, v.g, v.b]
+	return "%s = %.2f;" % [uname, v]
 
 
 func _unhandled_input(event: InputEvent) -> void:

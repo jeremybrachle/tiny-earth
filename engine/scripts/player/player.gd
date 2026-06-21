@@ -24,6 +24,17 @@ const WATER_VERTICAL_RATE := 8.0
 const STEP_REACH := 1.6
 const STEP_MAX_UP := 2.3
 const STEP_MIN_DOWN := -2.0
+# Auto-step (mini-globe ONLY): on the small inner globe the blocky relief is all
+# ~one-block steps, so we lift the player straight onto a step directly ahead while
+# walking — no jump — the walking analogue of the swim climb-out. The outer surface
+# is deliberately left jump-only so real terrain still reads as terrain.
+const MINI_STEP_REACH := 0.9
+# The inner-globe skin's relief step is ~0.5 (inner_globe_voxels _voxel_size), so cap
+# the auto-step just above one block — a single step climbs, a taller wall doesn't.
+const MINI_STEP_MAX := 0.8
+# Capsule is radius 0.4 / height 1.8 centred on the body origin, so the feet sit
+# half the height below global_position. The auto-step probe measures from the feet.
+const CAPSULE_HALF_HEIGHT := 0.9
 const FLY_SPEED := WALK_SPEED * 5.0
 
 const MOUSE_SENSITIVITY := 0.08  # degrees per pixel
@@ -171,6 +182,9 @@ func _physics_process(delta: float) -> void:
 	# never reads as "swimming".
 	var planet_r := _planet_radius()
 	var near_surface := global_position.length() > planet_r * 0.9
+	# On the inner mini-globe (radius ≈ planet_r * 0.25) the relief is one-block steps
+	# we auto-step; nowhere else qualifies (the inner-shell floor sits far higher).
+	var on_mini := global_position.length() < planet_r * 0.5
 	# Body-in-water samples. chest_wet/body_wet tell "in the water" from "in the air
 	# above the ocean" in the swim branch; body_wet also keeps swim+climb control
 	# alive as you reach a shore where the column underfoot already reads as land.
@@ -263,6 +277,13 @@ func _physics_process(delta: float) -> void:
 
 		if Input.is_action_just_pressed("ui_accept") and is_on_floor():
 			velocity += surface_normal * JUMP_VELOCITY
+
+		# Mini-globe only: auto-step up onto a one-block ledge directly ahead (no jump),
+		# then let the horizontal slide carry the player onto it.
+		if on_mini and is_on_floor() and wish_dir.length() > 0.01:
+			var rise := _mini_step_rise(wish_dir.normalized(), surface_normal)
+			if rise > 0.0:
+				move_and_collide(surface_normal * (rise + 0.05))
 
 		move_and_slide()
 		_swim_bob = 0.0
@@ -602,3 +623,29 @@ func _can_step_out(fwd: Vector3, surface_normal: Vector3) -> bool:
 		return false
 	var rise: float = (Vector3(hit["position"]) - global_position).dot(surface_normal)
 	return rise >= STEP_MIN_DOWN and rise <= STEP_MAX_UP
+
+
+# Height of a climbable ONE-block step directly ahead in `wish_dir`, else 0. Used
+# only on the mini-globe to auto-step its blocky relief (see _physics_process).
+# Probes a short reach ahead, casts down to the solid top there, and returns the
+# rise if it sits within (0, MINI_STEP_MAX] above the feet — a single step to lift
+# onto. A taller wall (cliff) or open air ahead returns 0, so nothing auto-lifts.
+func _mini_step_rise(wish_dir: Vector3, surface_normal: Vector3) -> float:
+	if not planet:
+		return 0.0
+	# Anchor the probe at the FEET (global_position is the capsule centre, ~0.9 above
+	# the feet) so a low one-block step still falls inside the cast and reads positive.
+	var feet := global_position - surface_normal * CAPSULE_HALF_HEIGHT
+	var space := get_world_3d().direct_space_state
+	var ahead := feet + wish_dir * MINI_STEP_REACH
+	var from := ahead + surface_normal * (MINI_STEP_MAX + 0.2)
+	var to := ahead - surface_normal * 0.2
+	var q := PhysicsRayQueryParameters3D.create(from, to)
+	q.exclude = [get_rid()]
+	var hit := space.intersect_ray(q)
+	if hit.is_empty():
+		return 0.0
+	var rise: float = (Vector3(hit["position"]) - feet).dot(surface_normal)
+	if rise > 0.05 and rise <= MINI_STEP_MAX:
+		return rise
+	return 0.0

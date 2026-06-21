@@ -22,6 +22,9 @@ var _inner_faces: Array = []  # the 6 inner shell faces (the hollow interior)
 
 
 func _ready() -> void:
+	# So the F3 cavity tuner (inner_globe_debug.gd) can find us and reach the inner
+	# faces' ceiling materials for live city-light tuning.
+	add_to_group("voxel_planet")
 	var cfg := _load_planet_config()
 	resolution = cfg.get("resolution", 256)
 	planet_radius = cfg.get("planet_radius", float(resolution))
@@ -55,6 +58,18 @@ func _ready() -> void:
 		add_child(icf)
 		_faces.append(icf)
 		_inner_faces.append(icf)
+
+
+# The inner-shell ceiling materials (inner_voxel.gdshader), one per inner face,
+# for the F3 cavity tuner to push city-light uniforms across all faces at once.
+# Skips faces not yet built (material null during the async build).
+func get_inner_materials() -> Array:
+	var mats: Array = []
+	for f in _inner_faces:
+		var m: ShaderMaterial = f.get_ceiling_material()
+		if m:
+			mats.append(m)
+	return mats
 
 
 # Orchestrated, frame-spread build. Phases:

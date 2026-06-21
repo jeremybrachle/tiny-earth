@@ -1,0 +1,323 @@
+# ============================================================================
+# ARCHIVED — "uniform-block frustum layers" version of the inner mini-globe.
+# Saved 2026-06-21 so we can return to it. NOT compiled (.gd.txt extension).
+# To restore: copy the body below over scripts/planet/inner_globe_voxels.gd, then
+# in planet_generator.gd set the call to voxels.setup(_inner_r, cpe), remove the
+# base SphereShape3D collider, and have build_inner_voxels() free _inner_smooth;
+# in player.gd re-add the inner_globe_voxels dig routing in _break_voxel_aimed /
+# _break_voxel_underfoot and set MINI_STEP_MAX = 1.7.
+#
+# What it does: a solid, diggable voxel ball of UNIFORM-resolution blocks in uniform
+# radial layers (blocks ~cubes at the surface, shrinking toward a single bright centre
+# cube). Surface raised into mountains from real terrain (ChunkLoader). Simple 1:1
+# digging, no LOD seams. Sibling archive: inner_globe_voxels_octree.gd.txt.
+# ============================================================================
+
+extends StaticBody3D
+
+const CHUNK_SIZE := 16
+
+const ANG_RES := 64
+const LAYER_H := 1.5
+const CORE_RADIUS := 4.0
+const RELIEF_SCALE := 0.5
+const RELIEF_MAX := 8
+
+const SURFACE_DIM := 0.5
+const SIDE_DIM := 0.7
+const ROCK_COLOR := Color(0.42, 0.36, 0.30)
+const CORE_COLOR := Color(1.0, 0.18, 0.85)
+
+var _inner_r: float = 64.0
+var _cpe: int = 16
+var _crust_res: int = 256
+var _base_layers: int = 0
+var _total_layers: int = 0
+
+var _top_layer := PackedInt32Array()
+var _dug := {}
+var _layer_nodes: Array = []
+
+var _mat: StandardMaterial3D
+var _biome_img: Image = null
+var _biw := 0
+var _bih := 0
+var _built := false
+
+
+func setup(inner_r: float, chunks_per_edge: int) -> void:
+	_inner_r = inner_r
+	_cpe = chunks_per_edge
+	_crust_res = _cpe * CHUNK_SIZE
+	_base_layers = int(round((_inner_r - CORE_RADIUS) / LAYER_H))
+	_total_layers = _base_layers + RELIEF_MAX
+
+	_mat = StandardMaterial3D.new()
+	_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_mat.vertex_color_use_as_albedo = true
+	_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+	var tex := load("res://planet/earth_biome_map.png") as Texture2D
+	if tex:
+		_biome_img = tex.get_image()
+		if _biome_img:
+			_biw = _biome_img.get_width()
+			_bih = _biome_img.get_height()
+
+	add_to_group("inner_globe_voxels")
+	visible = true
+
+
+func is_built() -> bool:
+	return _built
+
+
+func surface_radius() -> float:
+	return _inner_r + float(RELIEF_MAX) * LAYER_H
+
+
+func build() -> void:
+	if _built:
+		return
+	_built = true
+	await _sample_relief()
+	_make_center_cube()
+	_layer_nodes.resize(_total_layers)
+	for L in range(_total_layers - 1, -1, -1):
+		_build_layer_mesh(L)
+		await get_tree().process_frame
+
+
+func _sample_relief() -> void:
+	_top_layer = PackedInt32Array()
+	_top_layer.resize(6 * ANG_RES * ANG_RES)
+	_top_layer.fill(_base_layers)
+
+	for face in 6:
+		for cx in _cpe:
+			for cy in _cpe:
+				var data := ChunkLoader.load(face, cx, cy)
+				if data.is_empty():
+					continue
+				for lc in CHUNK_SIZE:
+					for lr in CHUNK_SIZE:
+						var top_any := -1
+						var top_mat := 0
+						for d in CHUNK_SIZE:
+							var m := ChunkLoader.voxel(data, lc, lr, d)
+							if m == 0:
+								continue
+							top_any = d
+							top_mat = m
+						if top_any <= 0 or top_mat == 2:
+							continue
+						var crust_col := cx * CHUNK_SIZE + lc
+						var crust_row := cy * CHUNK_SIZE + lr
+						var vc := crust_col * ANG_RES / _crust_res
+						var vr := crust_row * ANG_RES / _crust_res
+						var cid := (face * ANG_RES + vc) * ANG_RES + vr
+						var top := _base_layers + mini(int(round(top_any * RELIEF_SCALE)), RELIEF_MAX)
+						if top > _top_layer[cid]:
+							_top_layer[cid] = top
+		await get_tree().process_frame
+
+
+func _make_center_cube() -> void:
+	var box := BoxMesh.new()
+	var s := CORE_RADIUS
+	box.size = Vector3(s, s, s)
+	var bmat := StandardMaterial3D.new()
+	bmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	bmat.albedo_color = CORE_COLOR
+	var inst := MeshInstance3D.new()
+	inst.mesh = box
+	inst.material_override = bmat
+	add_child(inst)
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(s, s, s)
+	col.shape = shape
+	add_child(col)
+
+
+func dig_at(world_pos: Vector3) -> bool:
+	var rel := world_pos - global_position
+	var r := rel.length()
+	var L := int((r - CORE_RADIUS) / LAYER_H)
+	if L < 0 or L >= _total_layers:
+		return false
+	var fcr := CubeFace.unit_to_face_col_row(rel.normalized(), ANG_RES)
+	return _dig_cell(int(fcr[0]), int(fcr[1]), int(fcr[2]), L)
+
+
+func dig_top(dir: Vector3) -> bool:
+	var fcr := CubeFace.unit_to_face_col_row(dir.normalized(), ANG_RES)
+	var face := int(fcr[0])
+	var c := int(fcr[1])
+	var r := int(fcr[2])
+	var cid := (face * ANG_RES + c) * ANG_RES + r
+	for L in range(_top_layer[cid] - 1, -1, -1):
+		if _dig_cell(face, c, r, L):
+			return true
+	return false
+
+
+func _dig_cell(face: int, c: int, r: int, L: int) -> bool:
+	if not _cell_solid(face, c, r, L):
+		return false
+	var cid := (face * ANG_RES + c) * ANG_RES + r
+	_dug[cid * _total_layers + L] = true
+	for ll in [L - 1, L, L + 1]:
+		if ll >= 0 and ll < _total_layers:
+			_build_layer_mesh(ll)
+	return true
+
+
+func _cell_solid(face: int, c: int, r: int, L: int) -> bool:
+	if L < 0 or L >= _total_layers:
+		return false
+	if c < 0 or c >= ANG_RES or r < 0 or r >= ANG_RES:
+		var u := (float(c) + 0.5) / float(ANG_RES)
+		var v := (float(r) + 0.5) / float(ANG_RES)
+		var dir := CubeFace.face_uv_to_unit(face, u, v)
+		var fcr := CubeFace.unit_to_face_col_row(dir, ANG_RES)
+		face = int(fcr[0])
+		c = int(fcr[1])
+		r = int(fcr[2])
+	var cid := (face * ANG_RES + c) * ANG_RES + r
+	if L >= _top_layer[cid]:
+		return false
+	return not _dug.has(cid * _total_layers + L)
+
+
+func _build_layer_mesh(L: int) -> void:
+	var old = _layer_nodes[L]
+	if old != null:
+		if old.has("mesh") and old["mesh"]:
+			old["mesh"].queue_free()
+		if old.has("col") and old["col"]:
+			old["col"].queue_free()
+		_layer_nodes[L] = null
+
+	var r_in := CORE_RADIUS + float(L) * LAYER_H
+	var r_out := r_in + LAYER_H
+
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for face in 6:
+		for c in ANG_RES:
+			for r in ANG_RES:
+				if not _cell_solid(face, c, r, L):
+					continue
+				_emit_cell(st, face, c, r, L, r_out, r_in)
+
+	var mesh := st.commit()
+	if mesh == null or mesh.get_surface_count() == 0:
+		return
+
+	var inst := MeshInstance3D.new()
+	inst.mesh = mesh
+	inst.material_override = _mat
+	add_child(inst)
+
+	var shape := mesh.create_trimesh_shape()
+	shape.backface_collision = true
+	var col := CollisionShape3D.new()
+	col.shape = shape
+	add_child(col)
+
+	_layer_nodes[L] = {"mesh": inst, "col": col}
+
+
+func _emit_cell(
+	st: SurfaceTool, face: int, c: int, r: int, L: int, r_out: float, r_in: float
+) -> void:
+	var color := _cell_color(face, c, r, L)
+	var side := Color(color.r * SIDE_DIM, color.g * SIDE_DIM, color.b * SIDE_DIM, color.a)
+	var dir_c := CubeFace.face_uv_to_unit(face, (float(c) + 0.5) / ANG_RES, (float(r) + 0.5) / ANG_RES)
+	var cell_center := dir_c * (r_out + r_in) * 0.5
+
+	if not _cell_solid(face, c, r, L + 1):
+		_emit_radial_quad(st, face, c, r, r_out, color, cell_center)
+	if L > 0 and not _cell_solid(face, c, r, L - 1):
+		_emit_radial_quad(st, face, c, r, r_in, color, cell_center)
+
+	if not _cell_solid(face, c + 1, r, L):
+		_emit_side(st, face, float(c + 1) / ANG_RES, float(r) / ANG_RES, float(r + 1) / ANG_RES, true, r_out, r_in, side, cell_center)
+	if not _cell_solid(face, c - 1, r, L):
+		_emit_side(st, face, float(c) / ANG_RES, float(r) / ANG_RES, float(r + 1) / ANG_RES, true, r_out, r_in, side, cell_center)
+	if not _cell_solid(face, c, r + 1, L):
+		_emit_side(st, face, float(r + 1) / ANG_RES, float(c) / ANG_RES, float(c + 1) / ANG_RES, false, r_out, r_in, side, cell_center)
+	if not _cell_solid(face, c, r - 1, L):
+		_emit_side(st, face, float(r) / ANG_RES, float(c) / ANG_RES, float(c + 1) / ANG_RES, false, r_out, r_in, side, cell_center)
+
+
+func _emit_radial_quad(
+	st: SurfaceTool, face: int, c: int, r: int, radius: float, color: Color, cell_center: Vector3
+) -> void:
+	var u0 := float(c) / ANG_RES
+	var u1 := float(c + 1) / ANG_RES
+	var v0 := float(r) / ANG_RES
+	var v1 := float(r + 1) / ANG_RES
+	var p0 := CubeFace.face_uv_to_unit(face, u0, v0) * radius
+	var p1 := CubeFace.face_uv_to_unit(face, u1, v0) * radius
+	var p2 := CubeFace.face_uv_to_unit(face, u1, v1) * radius
+	var p3 := CubeFace.face_uv_to_unit(face, u0, v1) * radius
+	_emit_quad(st, color, p0, p1, p2, p3, cell_center)
+
+
+func _emit_side(
+	st: SurfaceTool, face: int, fixed: float, a: float, b: float, along_u: bool,
+	r_out: float, r_in: float, color: Color, cell_center: Vector3
+) -> void:
+	var d0: Vector3
+	var d1: Vector3
+	if along_u:
+		d0 = CubeFace.face_uv_to_unit(face, fixed, a)
+		d1 = CubeFace.face_uv_to_unit(face, fixed, b)
+	else:
+		d0 = CubeFace.face_uv_to_unit(face, a, fixed)
+		d1 = CubeFace.face_uv_to_unit(face, b, fixed)
+	_emit_quad(st, color, d0 * r_out, d1 * r_out, d1 * r_in, d0 * r_in, cell_center)
+
+
+func _emit_quad(
+	st: SurfaceTool, color: Color, p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, cell_center: Vector3
+) -> void:
+	st.set_color(color)
+	var outward := (p0 + p1 + p2 + p3) * 0.25 - cell_center
+	if (p1 - p0).cross(p2 - p0).dot(outward) >= 0.0:
+		st.add_vertex(p0)
+		st.add_vertex(p1)
+		st.add_vertex(p2)
+		st.add_vertex(p0)
+		st.add_vertex(p2)
+		st.add_vertex(p3)
+	else:
+		st.add_vertex(p0)
+		st.add_vertex(p2)
+		st.add_vertex(p1)
+		st.add_vertex(p0)
+		st.add_vertex(p3)
+		st.add_vertex(p2)
+
+
+func _cell_color(face: int, c: int, r: int, L: int) -> Color:
+	if L >= _base_layers - 1:
+		var col := _biome_color(face, (float(c) + 0.5) / ANG_RES, (float(r) + 0.5) / ANG_RES)
+		return Color(col.r * SURFACE_DIM, col.g * SURFACE_DIM, col.b * SURFACE_DIM, 1.0)
+	var t := 1.0 - float(L) / float(maxi(_base_layers - 1, 1))
+	return ROCK_COLOR.lerp(CORE_COLOR, t * 0.25)
+
+
+func _biome_color(face: int, u: float, v: float) -> Color:
+	if _biome_img == null:
+		return ROCK_COLOR
+	var dir := CubeFace.face_uv_to_unit(face, u, v)
+	var lat := asin(clamp(dir.y, -1.0, 1.0))
+	var lon := atan2(-dir.z, dir.x)
+	var tu := lon * 0.15915494 + 0.5
+	var tv := 0.5 - lat * 0.31830989
+	var px := int(clamp(tu * float(_biw), 0.0, float(_biw - 1)))
+	var py := int(clamp(tv * float(_bih), 0.0, float(_bih - 1)))
+	return _biome_img.get_pixel(px, py)

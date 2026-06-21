@@ -108,6 +108,12 @@ func init_face() -> void:
 	add_child(_flow_timer)
 
 
+# The ceiling material (inner_voxel.gdshader) for this face, so the F3 cavity
+# tuner (inner_globe_debug.gd) can push city-light params live across all faces.
+func get_ceiling_material() -> ShaderMaterial:
+	return _mat as ShaderMaterial
+
+
 func load_chunks() -> void:
 	for cx in chunks_per_edge:
 		for cy in chunks_per_edge:

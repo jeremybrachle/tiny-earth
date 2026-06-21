@@ -180,6 +180,7 @@ func _setup_planet_generator() -> void:
 	var planet_r: float = float(planet.get("planet_radius")) if planet else 256.0
 	var gen := preload("res://scripts/planet/planet_generator.gd").new()
 	gen.name = "PlanetGenerator"
+	gen.sky_mat = _sky_mat  # so the F3 cavity tuner's star controls reach the sky too
 	add_child(gen)
 	gen.setup(planet_r)
 	gen.generate_planet(gen.read_generation_stage())
@@ -252,6 +253,16 @@ func _start_build() -> void:
 	planet.build_phase.connect(_on_build_phase)
 	planet.build_progress.connect(_on_build_progress)
 	planet.build_finished.connect(_on_build_finished)
+
+	# Build the always-on inner-globe voxel skin FIRST so it's the first thing that
+	# pops in on the loading screen (it reads the static chunk caches, not the meshed
+	# crust, so it doesn't depend on the main build). Awaited before the long crust
+	# build kicks off so it never hitches mid-game.
+	var gen := get_node_or_null("PlanetGenerator")
+	if gen and gen.has_method("build_inner_voxels"):
+		_on_build_phase("Sculpting inner globe")
+		await gen.build_inner_voxels()
+
 	planet.build_planet_async(spawn_pos)
 
 

@@ -6,9 +6,9 @@ uniform float planet_radius    = 256.0;  // set by world.gd from planet_config.j
 // projection shows the identical real constellations. filter_linear (no mipmaps)
 // keeps faint single stars from fading out at distance.
 uniform sampler2D star_map     : source_color, filter_linear;
-uniform float star_brightness  : hint_range(0.0, 4.0) = 1.0;
-uniform float star_twinkle_speed  : hint_range(0.0, 6.0) = 2.5;  // matches inner_voxel.gdshader
-uniform float star_twinkle_floor  : hint_range(0.0, 1.0) = 0.25;  // low = dramatic twinkle
+uniform float star_brightness  : hint_range(0.0, 6.0) = 6.0;
+uniform float star_twinkle_speed  : hint_range(0.0, 6.0) = 2.19;  // matches inner_voxel.gdshader
+uniform float star_twinkle_floor  : hint_range(0.0, 1.0) = 0.04;  // low = dramatic twinkle
 uniform float star_twinkle_enable : hint_range(0.0, 1.0) = 1.0;  // 0 = steady (loading screen / menu)
 uniform float sun_size         : hint_range(0.005, 0.08) = 0.018;
 uniform float sun_glow         : hint_range(0.0, 2.0)   = 0.6;

@@ -23,19 +23,19 @@ uniform float edge_dark  : hint_range(0.0, 1.0)  = 0.50;
 // city_gamma shapes the falloff (higher = only bright cores show); city_gain
 // scales intensity before the warm tint. Twinkle is gentle (high floor).
 uniform sampler2D city_tex     : source_color, filter_linear;
-uniform vec3  city_color       : source_color = vec3(1.0, 0.80, 0.42);
-uniform float city_brightness  : hint_range(0.0, 8.0) = 3.4;
-uniform float city_gamma       : hint_range(0.5, 4.0) = 1.6;
-uniform float city_gain        : hint_range(0.5, 8.0) = 3.0;
+uniform vec3  city_color       : source_color = vec3(1.000, 0.800, 0.420);
+uniform float city_brightness  : hint_range(0.0, 8.0) = 1.38;
+uniform float city_gamma       : hint_range(0.5, 4.0) = 2.79;
+uniform float city_gain        : hint_range(0.5, 8.0) = 7.35;
 uniform float city_twinkle_floor : hint_range(0.0, 1.0) = 0.6;  // higher = steadier than stars
 
 // Stars (inverted ocean) — the REAL night sky, sampled from the same baked
 // catalog map as sky_space.gdshader so the ceiling projection shows the identical
 // constellations, in lockstep.
 uniform sampler2D star_map       : source_color, filter_linear;
-uniform float star_brightness    : hint_range(0.0, 6.0)  = 2.6;
-uniform float star_twinkle_speed : hint_range(0.0, 6.0)  = 2.5;
-uniform float star_twinkle_floor : hint_range(0.0, 1.0)  = 0.25;
+uniform float star_brightness    : hint_range(0.0, 6.0)  = 6.0;
+uniform float star_twinkle_speed : hint_range(0.0, 6.0)  = 2.19;
+uniform float star_twinkle_floor : hint_range(0.0, 1.0)  = 0.04;
 uniform float star_twinkle_enable: hint_range(0.0, 1.0)  = 1.0;
 uniform vec3  space_tint         : source_color = vec3(0.0, 0.0, 0.012);
 

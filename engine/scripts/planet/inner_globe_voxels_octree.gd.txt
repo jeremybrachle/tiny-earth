@@ -1,0 +1,328 @@
+# ============================================================================
+# ARCHIVED — Jordan Peck "octree shells" version of the inner mini-globe.
+# Saved 2026-06-21 so we can return to it. NOT compiled (.gd.txt extension).
+# To restore: copy the body below over scripts/planet/inner_globe_voxels.gd.
+#
+# What it does: a solid, diggable voxel ball whose angular resolution HALVES each
+# shell inward (64→32→…→1), ending in a single bright centre cube. Voxels stay
+# ~constant size and merge toward the core. No surface terrain relief (uniform
+# sphere). Replaced by the uniform-block (frustum-layer) version with mountains.
+#
+# Pairs with the unchanged dig routing in player.gd (surface_radius/dig_at/dig_top)
+# and planet_generator.build_inner_voxels (which frees the smooth preview sphere).
+# Note: the live version's setup() now takes (inner_r, chunks_per_edge); this
+# archived setup() takes (inner_r) only — adjust the call if restoring.
+# ============================================================================
+
+extends StaticBody3D
+
+# The inner mini-globe as a SOLID, DIGGABLE voxel ball built with Jordan Peck's
+# "World Structure Technique" (jorpeck, 2015): concentric cube-sphere shells whose
+# angular resolution HALVES each step inward, so the voxels stay ~constant size and
+# merge toward a single bright cube at the very centre.
+#
+#   shell 0 (outermost) : res = SURFACE_RES per cube face, coloured from the biome
+#                         map (the loading-globe look), dimmed for the dark cavern.
+#   shell 1..N-2        : res halves each step; plain rock tone, warming inward.
+#   shell N-1 (centre)  : res = 1 → six wedges meeting at the origin ≈ a single cube,
+#                         the bright vibrant CORE.
+#
+# Every cell starts solid, so the ball initially shows only its surface (interior
+# faces are culled) — the layered structure is revealed by DIGGING. Digging routes
+# here from player.gd when the aim/feet land inside the ball (radius ≤ _inner_r);
+# dig_at / dig_top clear a cell and remesh the affected shells.
+#
+# Built shell-by-shell as the first loading step (planet_generator.build_inner_voxels),
+# yielding a frame per shell so it never hitches mid-game. The smooth preview sphere
+# is freed once this finishes (planet_generator), so this ball is the inner globe.
+
+# Outermost shell resolution per cube face (the "Medium" blockiness pick). Must be a
+# power of two so the halving bottoms out cleanly at res 1 (the centre cube).
+const SURFACE_RES := 64
+
+# Brightness of the surface biome colours, baked into the vertex colours (the
+# material is plain white) so the dark cavern reads without washing out the core.
+const SURFACE_DIM := 0.5
+# Side walls are drawn a touch darker than the tops for blocky relief once dug.
+const SIDE_DIM := 0.7
+
+const ROCK_COLOR := Color(0.42, 0.36, 0.30)  # interior rock tone
+const CORE_COLOR := Color(1.0, 0.18, 0.85)   # bright vibrant centre cube
+
+var _inner_r: float = 64.0
+var _res0: int = SURFACE_RES
+var _shells: int = 0          # number of shells (= log2(_res0) + 1)
+var _band: float = 0.0        # radial thickness of one shell
+
+var _res := PackedInt32Array()  # angular resolution per shell (outer→inner)
+var _solid: Array = []          # per shell: PackedByteArray[6*res*res], 1=solid 0=air
+var _shell_nodes: Array = []    # per shell: {"mesh": MeshInstance3D, "col": CollisionShape3D} or null
+
+var _mat: StandardMaterial3D
+var _biome_img: Image = null
+var _biw := 0
+var _bih := 0
+var _built := false
+
+
+func setup(inner_r: float) -> void:
+	_inner_r = inner_r
+	_res0 = SURFACE_RES
+
+	# Number of shells = how many times res halves before reaching 1, inclusive.
+	_res = PackedInt32Array()
+	var r := _res0
+	while r >= 1:
+		_res.append(r)
+		r = r >> 1
+	_shells = _res.size()
+	_band = _inner_r / float(_shells)
+
+	# Unshaded vertex-colour material (the cavern is dark; the ball lights itself).
+	# cull_disabled so dug interiors read from any side. Brightness is baked into the
+	# vertex colours, so albedo stays white.
+	_mat = StandardMaterial3D.new()
+	_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_mat.vertex_color_use_as_albedo = true
+	_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+	var tex := load("res://planet/earth_biome_map.png") as Texture2D
+	if tex:
+		_biome_img = tex.get_image()
+		if _biome_img:
+			_biw = _biome_img.get_width()
+			_bih = _biome_img.get_height()
+
+	add_to_group("inner_globe_voxels")  # so player.gd can route digs here
+	visible = true
+
+
+func is_built() -> bool:
+	return _built
+
+
+# The ball's surface radius — player.gd uses it to decide whether a dig lands here.
+func surface_radius() -> float:
+	return _inner_r
+
+
+# Build every shell once (outer→inner), yielding a frame each so it pops in layer by
+# layer. A fully solid ball only emits its surface; deeper shells stay empty meshes
+# until dug into.
+func build() -> void:
+	if _built:
+		return
+	_built = true
+	_init_solid()
+	_shell_nodes.resize(_shells)
+	for d in _shells:
+		_build_shell_mesh(d)
+		await get_tree().process_frame
+
+
+func _init_solid() -> void:
+	_solid.clear()
+	for d in _shells:
+		var res: int = _res[d]
+		var arr := PackedByteArray()
+		arr.resize(6 * res * res)
+		arr.fill(1)
+		_solid.append(arr)
+
+
+# --- digging ---------------------------------------------------------------------
+
+# Remove the cell that contains `world_pos` (used by the aimed dig). Returns true if
+# a solid cell was actually cleared (so the caller stops chaining to other shells).
+func dig_at(world_pos: Vector3) -> bool:
+	var rel := world_pos - global_position
+	var r := rel.length()
+	if r > _inner_r:
+		return false
+	var d := clampi(int((_inner_r - r) / _band), 0, _shells - 1)
+	var res: int = _res[d]
+	var fcr := CubeFace.unit_to_face_col_row(rel.normalized(), res)
+	var i := _idx(res, int(fcr[0]), int(fcr[1]), int(fcr[2]))
+	if _solid[d][i] == 0:
+		return false
+	_solid[d][i] = 0
+	_remesh_around(d)
+	return true
+
+
+# Remove the topmost solid cell along `dir` (used by the dig-underfoot key, so each
+# press eats one layer straight down). Returns true if something was removed.
+func dig_top(dir: Vector3) -> bool:
+	var u := dir.normalized()
+	for d in _shells:
+		var res: int = _res[d]
+		var fcr := CubeFace.unit_to_face_col_row(u, res)
+		var i := _idx(res, int(fcr[0]), int(fcr[1]), int(fcr[2]))
+		if _solid[d][i] == 1:
+			_solid[d][i] = 0
+			_remesh_around(d)
+			return true
+	return false
+
+
+# A dig at shell d changes the exposed faces of d itself AND its radial neighbours
+# (their shared-boundary faces), so rebuild all three.
+func _remesh_around(d: int) -> void:
+	for dd in [d - 1, d, d + 1]:
+		if dd >= 0 and dd < _shells:
+			_build_shell_mesh(dd)
+
+
+# --- meshing ---------------------------------------------------------------------
+
+func _idx(res: int, face: int, c: int, r: int) -> int:
+	return (face * res + c) * res + r
+
+
+# Solidity of a neighbour cell in the SAME shell, wrapping across cube-face seams
+# (an out-of-range col/row maps through the sphere direction to the adjacent face).
+func _solid_at(d: int, face: int, c: int, r: int) -> int:
+	var res: int = _res[d]
+	if c >= 0 and c < res and r >= 0 and r < res:
+		return _solid[d][_idx(res, face, c, r)]
+	var u := (float(c) + 0.5) / float(res)
+	var v := (float(r) + 0.5) / float(res)
+	var dir := CubeFace.face_uv_to_unit(face, u, v)  # u/v out of [0,1] still resolve
+	var fcr := CubeFace.unit_to_face_col_row(dir, res)
+	return _solid[d][_idx(res, int(fcr[0]), int(fcr[1]), int(fcr[2]))]
+
+
+func _build_shell_mesh(d: int) -> void:
+	# Drop the previous geometry for this shell (deferred; a 1-frame overlap is fine).
+	var old = _shell_nodes[d]
+	if old != null:
+		if old.has("mesh") and old["mesh"]:
+			old["mesh"].queue_free()
+		if old.has("col") and old["col"]:
+			old["col"].queue_free()
+		_shell_nodes[d] = null
+
+	var res: int = _res[d]
+	var r_out := _inner_r * float(_shells - d) / float(_shells)
+	var r_in := _inner_r * float(_shells - d - 1) / float(_shells)
+
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for face in 6:
+		for c in res:
+			for rr in res:
+				if _solid[d][_idx(res, face, c, rr)] == 0:
+					continue
+				_emit_cell(st, d, face, c, rr, res, r_out, r_in)
+
+	var mesh := st.commit()
+	if mesh == null or mesh.get_surface_count() == 0:
+		return  # fully buried (interior faces culled) or fully dug — no geometry
+
+	var inst := MeshInstance3D.new()
+	inst.mesh = mesh
+	inst.material_override = _mat
+	add_child(inst)
+
+	var shape := mesh.create_trimesh_shape()
+	shape.backface_collision = true
+	var col := CollisionShape3D.new()
+	col.shape = shape
+	add_child(col)
+
+	_shell_nodes[d] = {"mesh": inst, "col": col}
+
+
+func _emit_cell(
+	st: SurfaceTool, d: int, face: int, c: int, r: int, res: int, r_out: float, r_in: float
+) -> void:
+	var color := _cell_color(d, face, c, r, res)
+	var side := Color(color.r * SIDE_DIM, color.g * SIDE_DIM, color.b * SIDE_DIM, color.a)
+
+	# TOP
+	if d == 0:
+		_emit_radial_quad(st, face, c, r, res, r_out, color)
+	else:
+		var res2: int = _res[d - 1]  # = res * 2 (finer shell above)
+		for sc in [c * 2, c * 2 + 1]:
+			for sr in [r * 2, r * 2 + 1]:
+				if _solid[d - 1][_idx(res2, face, sc, sr)] == 0:
+					_emit_radial_quad(st, face, sc, sr, res2, r_out, color)
+
+	# BOTTOM
+	if d < _shells - 1:
+		var resb: int = _res[d + 1]  # = res / 2 (coarser shell below)
+		if _solid[d + 1][_idx(resb, face, c >> 1, r >> 1)] == 0:
+			_emit_radial_quad(st, face, c, r, res, r_in, color)
+
+	# SIDES — one radial wall per air neighbour (cross-face aware via _solid_at).
+	if _solid_at(d, face, c + 1, r) == 0:
+		_emit_side(st, face, float(c + 1) / res, float(r) / res, float(r + 1) / res, true, r_out, r_in, side)
+	if _solid_at(d, face, c - 1, r) == 0:
+		_emit_side(st, face, float(c) / res, float(r) / res, float(r + 1) / res, true, r_out, r_in, side)
+	if _solid_at(d, face, c, r + 1) == 0:
+		_emit_side(st, face, float(r + 1) / res, float(c) / res, float(c + 1) / res, false, r_out, r_in, side)
+	if _solid_at(d, face, c, r - 1) == 0:
+		_emit_side(st, face, float(r) / res, float(c) / res, float(c + 1) / res, false, r_out, r_in, side)
+
+
+func _emit_radial_quad(
+	st: SurfaceTool, face: int, c: int, r: int, res: int, radius: float, color: Color
+) -> void:
+	var u0 := float(c) / res
+	var u1 := float(c + 1) / res
+	var v0 := float(r) / res
+	var v1 := float(r + 1) / res
+	var p0 := CubeFace.face_uv_to_unit(face, u0, v0) * radius
+	var p1 := CubeFace.face_uv_to_unit(face, u1, v0) * radius
+	var p2 := CubeFace.face_uv_to_unit(face, u1, v1) * radius
+	var p3 := CubeFace.face_uv_to_unit(face, u0, v1) * radius
+	_emit_quad(st, color, p0, p1, p2, p3)
+
+
+func _emit_side(
+	st: SurfaceTool, face: int, fixed: float, a: float, b: float, along_u: bool,
+	r_out: float, r_in: float, color: Color
+) -> void:
+	var d0: Vector3
+	var d1: Vector3
+	if along_u:
+		d0 = CubeFace.face_uv_to_unit(face, fixed, a)
+		d1 = CubeFace.face_uv_to_unit(face, fixed, b)
+	else:
+		d0 = CubeFace.face_uv_to_unit(face, a, fixed)
+		d1 = CubeFace.face_uv_to_unit(face, b, fixed)
+	_emit_quad(st, color, d0 * r_out, d1 * r_out, d1 * r_in, d0 * r_in)
+
+
+func _emit_quad(st: SurfaceTool, color: Color, p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3) -> void:
+	st.set_color(color)
+	st.add_vertex(p0)
+	st.add_vertex(p1)
+	st.add_vertex(p2)
+	st.add_vertex(p0)
+	st.add_vertex(p2)
+	st.add_vertex(p3)
+
+
+func _cell_color(d: int, face: int, c: int, r: int, res: int) -> Color:
+	if d == 0:
+		var col := _biome_color(face, (float(c) + 0.5) / res, (float(r) + 0.5) / res)
+		return Color(col.r * SURFACE_DIM, col.g * SURFACE_DIM, col.b * SURFACE_DIM, 1.0)
+	if d == _shells - 1:
+		return CORE_COLOR
+	var t := float(d) / float(_shells - 1)
+	return ROCK_COLOR.lerp(CORE_COLOR, t * 0.35)
+
+
+func _biome_color(face: int, u: float, v: float) -> Color:
+	if _biome_img == null:
+		return ROCK_COLOR
+	var dir := CubeFace.face_uv_to_unit(face, u, v)
+	var lat := asin(clamp(dir.y, -1.0, 1.0))
+	var lon := atan2(-dir.z, dir.x)
+	var tu := lon * 0.15915494 + 0.5  # 1/(2π)
+	var tv := 0.5 - lat * 0.31830989  # 1/π
+	var px := int(clamp(tu * float(_biw), 0.0, float(_biw - 1)))
+	var py := int(clamp(tv * float(_bih), 0.0, float(_bih - 1)))
+	return _biome_img.get_pixel(px, py)

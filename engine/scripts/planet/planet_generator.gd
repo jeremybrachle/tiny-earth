@@ -21,6 +21,7 @@ extends Node3D
 
 const _CONFIG_PATH := "res://planet/planet_config.json"
 const DEFAULT_STAGE := 1
+const CHUNK_SIZE := 16
 
 # Inner sphere radius as a fraction of the outer planet radius (ADR-001: 96/512 ≈ 0.1875;
 # rounded to 0.25 here so the core is comfortably reachable below the inner-shell floor).
@@ -29,6 +30,16 @@ const INNER_RADIUS_FRACTION := 0.25
 var _planet_radius: float = 512.0
 var _inner_r: float = 128.0
 var active_stage: int = 0
+
+# The sky material (sky_space.gdshader), passed in by world.gd so the F3 cavity
+# tuner's shared "Stars" controls can drive the sky and the cavity ceiling together.
+var sky_mat: ShaderMaterial = null
+
+# Inner globe nodes. The blocky 1:1 voxel skin (InnerGlobeVoxels) is the always-on
+# look; the smooth recoloured sphere sits just beneath it as the loading-screen
+# preview and the view from inside the hollow (e.g. flying through the core).
+var _inner_smooth: MeshInstance3D = null
+var _inner_voxels = null  # InnerGlobeVoxels instance (preloaded; untyped for dynamic calls)
 
 
 func setup(planet_radius: float) -> void:
@@ -49,6 +60,31 @@ func read_generation_stage() -> int:
 	if parsed is Dictionary and (parsed as Dictionary).has("generation_stage"):
 		return int((parsed as Dictionary)["generation_stage"])
 	return DEFAULT_STAGE
+
+
+# Read an int field from planet_config.json, falling back to `default`.
+func _read_config_int(key: String, default: int) -> int:
+	if not FileAccess.file_exists(_CONFIG_PATH):
+		return default
+	var f := FileAccess.open(_CONFIG_PATH, FileAccess.READ)
+	if not f:
+		return default
+	var parsed: Variant = JSON.parse_string(f.get_as_text())
+	f.close()
+	if parsed is Dictionary and (parsed as Dictionary).has(key):
+		return int((parsed as Dictionary)[key])
+	return default
+
+
+# Build the always-on inner voxel skin. Run as the FIRST loading-screen step (so it
+# pops in first and never hitches mid-game). The smooth sphere stays visible beneath
+# it — the skin covers it from outside, but it's the view from inside the core.
+# Awaitable.
+func build_inner_voxels() -> void:
+	if _inner_voxels == null:
+		return
+	if not _inner_voxels.is_built():
+		await _inner_voxels.build()
 
 
 func generate_planet(stage_id: int) -> void:
@@ -94,8 +130,12 @@ func _build_inner_sphere() -> void:
 
 	var mesh_inst := MeshInstance3D.new()
 	var sphere := SphereMesh.new()
-	sphere.radius = _inner_r
-	sphere.height = _inner_r * 2.0
+	# A hair inside the voxel skin (which sits at _inner_r and up) so flat ocean tiles
+	# — also at _inner_r — don't z-fight with this surface. Invisible offset at this
+	# radius; it just tucks the smooth sphere safely beneath the always-on skin.
+	var smooth_r := _inner_r * 0.997
+	sphere.radius = smooth_r
+	sphere.height = smooth_r * 2.0
 	# Higher tessellation so the core silhouette + UV mapping stay crisp up close
 	# (defaults 64/32 visibly facet a sphere this large).
 	sphere.radial_segments = 128
@@ -111,11 +151,12 @@ func _build_inner_sphere() -> void:
 		smat.shader = load("res://shaders/inner_globe.gdshader") as Shader
 		smat.set_shader_parameter("biome_tex", tex)
 		mesh_inst.material_override = smat
-		# TEMPORARY live palette tuner (F3). Debug builds only.
+		# TEMPORARY live cavity tuner (F3): globe palette (this material) + ceiling
+		# city lights (looked up via the "voxel_planet" group). Debug builds only.
 		if OS.is_debug_build():
 			var dbg := preload("res://scripts/ui/inner_globe_debug.gd").new()
 			add_child(dbg)
-			dbg.setup(smat)
+			dbg.setup(smat, sky_mat)
 	else:
 		var fallback := StandardMaterial3D.new()
 		fallback.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -126,6 +167,18 @@ func _build_inner_sphere() -> void:
 	# Adjust rotation_degrees.y if continents appear rotated; use 45° increments.
 	mesh_inst.rotation_degrees = Vector3(0.0, 270.0, 0.0)
 	inner.add_child(mesh_inst)
+	_inner_smooth = mesh_inst
+
+	# The always-on blocky 1:1 voxel skin over the same surface data + palette, built
+	# first on the loading screen (build_inner_voxels). NO rotation — it uses the
+	# crust's geographic projection directly (like the outer faces), unlike the
+	# smooth sphere which needs a UV-seam rotation.
+	var voxels := preload("res://scripts/planet/inner_globe_voxels.gd").new()
+	voxels.name = "InnerGlobeVoxels"
+	var cpe := _read_config_int("chunks_per_edge", 16)
+	voxels.setup(_inner_r, CHUNK_SIZE * cpe, cpe)
+	inner.add_child(voxels)
+	_inner_voxels = voxels
 
 	var col := CollisionShape3D.new()
 	var shape := SphereShape3D.new()
