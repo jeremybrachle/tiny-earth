@@ -16,6 +16,7 @@ var resolution: int = 256
 var planet_radius: float = 256.0
 var chunks_per_edge: int = 16
 
+var _mesh_cpu_ms: int = 0  # accumulated chunk-mesh CPU time (load-time profiling)
 var _faces: Array = []  # all 12 shell faces (6 outer CubeFace + 6 inner InnerCubeFace)
 var _outer_faces: Array = []  # the 6 outer crust faces (surface continents/oceans)
 var _inner_faces: Array = []  # the 6 inner shell faces (the hollow interior)
@@ -90,12 +91,19 @@ func build_planet_async(spawn_pos: Vector3) -> void:
 	const LOAD_END := 50  # phase 1 fills 0–5% of the bar
 	const MESH_END := 950  # phase 2 fills 5–95%; seams fill the last 5%
 
+	# Per-phase CPU timing (excludes inter-frame awaits) — load-time profiling, item 1.
+	var load_cpu := 0
+	_mesh_cpu_ms = 0
+	var seam_cpu := 0
+
 	# Phase 1 — init + load (must finish for every face before any meshing).
 	build_phase.emit("Loading terrain data…")
 	var nf: int = _faces.size()
 	for i in nf:
+		var s := Time.get_ticks_msec()
 		_faces[i].init_face()
 		_faces[i].load_chunks()
+		load_cpu += Time.get_ticks_msec() - s
 		build_progress.emit(int(float(i + 1) / float(maxi(nf, 1)) * LOAD_END), PROGRESS_SCALE)
 		await get_tree().process_frame
 
@@ -118,7 +126,9 @@ func build_planet_async(spawn_pos: Vector3) -> void:
 	# Phase 3 — cross-face seam edges (all neighbour data now loaded).
 	build_phase.emit("Stitching seams…")
 	for i in nf:
+		var s := Time.get_ticks_msec()
 		_faces[i].rebuild_seam_edges()
+		seam_cpu += Time.get_ticks_msec() - s
 		build_progress.emit(
 			MESH_END + int(float(i + 1) / float(maxi(nf, 1)) * (PROGRESS_SCALE - MESH_END)),
 			PROGRESS_SCALE
@@ -126,6 +136,10 @@ func build_planet_async(spawn_pos: Vector3) -> void:
 		await get_tree().process_frame
 
 	build_progress.emit(PROGRESS_SCALE, PROGRESS_SCALE)
+	print(
+		"[crust] load=%dms  mesh=%dms  seams=%dms  (CPU work, excl. awaits; %d chunks)"
+		% [load_cpu, _mesh_cpu_ms, seam_cpu, n_mesh]
+	)
 	build_finished.emit()
 
 
@@ -148,7 +162,9 @@ func _collect_chunk_tasks(faces: Array, spawn_pos: Vector3) -> Array:
 # of the virtual progress range. Returns the updated `done`.
 func _mesh_tasks(tasks: Array, done: int, n_mesh: int, base: int, span: int, scale: int) -> int:
 	for t in tasks:
+		var s := Time.get_ticks_msec()
 		t["f"].build_chunk(t["cx"], t["cy"])
+		_mesh_cpu_ms += Time.get_ticks_msec() - s
 		done += 1
 		if done % CHUNKS_PER_FRAME == 0:
 			build_progress.emit(base + int(float(done) / float(n_mesh) * span), scale)

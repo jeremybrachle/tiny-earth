@@ -114,12 +114,15 @@ func has_chunk(cx: int, cy: int) -> bool:
 
 # Build one chunk's land + ocean mesh and its matching collision shape. No-op if
 # the chunk is unloaded. Called once per chunk by the orchestrator (batched).
+# The collision shape reuses the land render mesh's geometry (same triangles —
+# create_trimesh_shape ignores colour/uv/normals) instead of re-running the
+# per-voxel mesher a second time, which roughly halves the bulk-build mesh cost.
 func build_chunk(cx: int, cy: int) -> void:
 	var key := cx * chunks_per_edge + cy
 	if not _chunk_data.has(key):
 		return
-	_rebuild_chunk(cx, cy, key)
-	_build_chunk_collision(cx, cy)
+	var land_mesh := _rebuild_chunk(cx, cy, key)
+	_build_chunk_collision(cx, cy, land_mesh)
 
 
 # Approximate world-space centre of a chunk on this shell — used by the
@@ -395,13 +398,16 @@ func _build_chunk_collision_mesh(cx: int, cy: int) -> ArrayMesh:
 	return st.commit()
 
 
-func _build_chunk_collision(cx: int, cy: int) -> void:
+# `reuse` lets the bulk build pass the already-built land render mesh so collision
+# doesn't re-mesh the chunk; the dig/seam paths call this deferred with no mesh and
+# rebuild it fresh.
+func _build_chunk_collision(cx: int, cy: int, reuse: Mesh = null) -> void:
 	var key := cx * chunks_per_edge + cy
 	var old := _chunk_col_shapes.get(key) as CollisionShape3D
 	if old != null and is_instance_valid(old):
 		old.queue_free()
 		_chunk_col_shapes.erase(key)
-	var mesh := _build_chunk_collision_mesh(cx, cy)
+	var mesh := reuse if reuse != null else _build_chunk_collision_mesh(cx, cy)
 	if mesh == null or mesh.get_surface_count() == 0:
 		return
 	var shape := mesh.create_trimesh_shape()
@@ -470,7 +476,9 @@ func _add_ocean_tops_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int,
 				st.add_vertex(p01)
 
 
-func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
+# Returns the committed land render mesh so build_chunk can reuse it for collision
+# without re-meshing. Other callers (digs, water flow, seams) ignore the return.
+func _rebuild_chunk(cx: int, cy: int, key: int) -> Mesh:
 	# Retrieve UNTYPED (no `as` cast) — `as` on a freed object throws "Trying to
 	# cast a freed object". Always erase the dict entry after freeing: the water
 	# instance is only re-stored when the water mesh is non-empty, so a chunk
@@ -487,7 +495,7 @@ func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
 		old_water.queue_free()
 	_water_chunk_insts.erase(key)
 	if not _chunk_data.has(key):
-		return
+		return null
 	var chunk: PackedByteArray = _chunk_data[key] as PackedByteArray
 
 	var st: SurfaceTool = SurfaceTool.new()
@@ -511,6 +519,8 @@ func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
 		water_inst.material_override = _water_mat
 		add_child(water_inst)
 		_water_chunk_insts[key] = water_inst
+
+	return inst.mesh
 
 
 func set_water_visible(v: bool) -> void:

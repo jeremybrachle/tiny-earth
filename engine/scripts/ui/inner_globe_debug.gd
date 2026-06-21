@@ -37,6 +37,7 @@ const FLOAT_SPECS := [
 	{"name": "glass_edge_dark", "uniform": "edge_dark", "target": "glass", "def": 0.55, "lo": 0.0, "hi": 1.0},
 	{"name": "glass_edge_width", "uniform": "edge_width", "target": "glass", "def": 0.04, "lo": 0.0, "hi": 0.25},
 	{"name": "glass_edge_alpha", "uniform": "edge_alpha", "target": "glass", "def": 0.85, "lo": 0.0, "hi": 1.0},
+	{"name": "glass_etch_alpha", "uniform": "etch_alpha", "target": "glass", "def": 0.10, "lo": 0.0, "hi": 1.0},
 	{"name": "palette_brightness", "target": "globe", "def": 1.0, "lo": 0.2, "hi": 3.0},
 	{"name": "city_brightness", "target": "city", "def": 1.38, "lo": 0.0, "hi": 8.0},
 	{"name": "city_gain", "target": "city", "def": 7.35, "lo": 0.5, "hi": 8.0},

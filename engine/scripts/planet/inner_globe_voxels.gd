@@ -1,5 +1,9 @@
 extends StaticBody3D
 
+# Drives the loading bar during the inner-globe build (world.gd maps it into the
+# leading slice of the overall progress so "Sculpting inner globe" shows a percentage).
+signal build_progress(done: int, total: int)
+
 # The inner mini-globe as a HOLLOW, DIGGABLE voxel SHELL — a "Dyson sphere": a thin
 # crust of blocks following Earth's terrain, with open hollow space inside down to a
 # bright magenta core cube at the centre.
@@ -34,6 +38,12 @@ const CORE_R := 4.0                          # radius where the core begins
 const CORE_COLOR := Color(1.0, 0.92, 0.55)   # bright sun-yellow centre cube (glows)
 const _LAND_FALLBACK := Color(0.30, 0.45, 0.25)  # default land green (no land texel found)
 
+# Glass vertex-colour flags. The glass shader ignores the tint vertex colour (it uses
+# its own uniform) and instead reads COLOR.r as a "this is the TOP pane" flag so the
+# faint surface etch is drawn on tops only, not the bottom/side panes.
+const _GLASS_TOP := Color(1.0, 1.0, 1.0, 1.0)
+const _GLASS_SIDE := Color(0.0, 0.0, 0.0, 1.0)
+
 var _inner_r: float = 64.0
 var _res: int = 256
 var _chunks_per_edge: int = 16
@@ -66,6 +76,7 @@ var _biome_img: Image = null
 var _biw := 0
 var _bih := 0
 var _built := false
+var _glass_enabled := true   # water-glass toggle (player KEY_G): visible + collidable
 
 
 func setup(inner_r: float, res: int, chunks_per_edge: int) -> void:
@@ -113,24 +124,61 @@ func get_glass_material() -> ShaderMaterial:
 	return _glass_mat
 
 
+# Turn the water glass OFF (hidden AND non-collidable, so you fall straight through the
+# water without breaking blocks) or back ON. The state is remembered so chunks remeshed
+# after a dig come back in the right visibility/collision.
+func set_glass_enabled(on: bool) -> void:
+	_glass_enabled = on
+	for ci in _chunk_nodes:
+		var node: Dictionary = _chunk_nodes[ci]
+		if node.has("gl_mesh") and node["gl_mesh"]:
+			node["gl_mesh"].visible = on
+		if node.has("gl_col") and node["gl_col"]:
+			node["gl_col"].disabled = not on
+
+
+func is_glass_enabled() -> bool:
+	return _glass_enabled
+
+
 func build() -> void:
 	if _built:
 		return
 	_built = true
+	# Per-phase CPU timing (excludes the inter-frame awaits) so the load-time profiling
+	# in the queue can see where the inner-globe build actually spends its time.
+	const TOTAL_STEPS := 12  # 6 face computes + 6 face mesh passes (one await each)
+	var step := 0
+	var compute_ms := 0
+	var mesh_ms := 0
 	_heights.resize(6)
 	_mats.resize(6)
 	for face in 6:
+		var s := Time.get_ticks_msec()
 		_compute_face(face)
+		compute_ms += Time.get_ticks_msec() - s
+		step += 1
+		build_progress.emit(step, TOTAL_STEPS)
 		await get_tree().process_frame
+	var shell_s := Time.get_ticks_msec()
 	_build_shell()
 	_heights = []
 	_mats = []
 	_make_center_cube()
+	var shell_ms := Time.get_ticks_msec() - shell_s
 	for face in 6:
+		var s := Time.get_ticks_msec()
 		for ccx in _chunks_side:
 			for ccy in _chunks_side:
 				_build_chunk(face, ccx, ccy)
+		mesh_ms += Time.get_ticks_msec() - s
+		step += 1
+		build_progress.emit(step, TOTAL_STEPS)
 		await get_tree().process_frame
+	print(
+		"[inner_globe] compute_faces=%dms  build_shell=%dms  mesh_chunks=%dms  (CPU work, excl. awaits)"
+		% [compute_ms, shell_ms, mesh_ms]
+	)
 
 
 # Pass 1: fill _heights[face] / _mats[face] from the outer chunk caches.
@@ -388,6 +436,10 @@ func _build_chunk(face: int, ccx: int, ccy: int) -> void:
 	var node := {}
 	_commit_surface(st_op, _mat, node, "op")
 	_commit_surface(st_gl, _glass_mat, node, "gl")
+	# Honor the current glass toggle for freshly (re)meshed chunks (e.g. after a dig).
+	if not _glass_enabled and node.has("gl_mesh"):
+		node["gl_mesh"].visible = false
+		node["gl_col"].disabled = true
 	if not node.is_empty():
 		_chunk_nodes[ci] = node
 
@@ -423,18 +475,20 @@ func _emit_cell(st: SurfaceTool, face: int, c: int, r: int, L: int, water: bool)
 	# sides appear, and we want their edges to read. The glass shader uses its own tint
 	# uniform, so the vertex colour is unused.
 	if water:
+		# Top pane carries _GLASS_TOP so the shader etches only its surface; bottom +
+		# sides carry _GLASS_SIDE (no etch).
 		if not _cell_solid(face, c, r, L + 1):
-			_emit_radial_quad(st, face, c, r, r_out, Color.WHITE, cell_center, true)
+			_emit_radial_quad(st, face, c, r, r_out, _GLASS_TOP, cell_center, true)
 		if not _cell_solid(face, c, r, L - 1):
-			_emit_radial_quad(st, face, c, r, r_in, Color.WHITE, cell_center, false)
+			_emit_radial_quad(st, face, c, r, r_in, _GLASS_SIDE, cell_center, false)
 		if not _cell_solid(face, c + 1, r, L):
-			_emit_side(st, face, float(c + 1) / _ang, float(r) / _ang, float(r + 1) / _ang, true, r_out, r_in, Color.WHITE, cell_center, true)
+			_emit_side(st, face, float(c + 1) / _ang, float(r) / _ang, float(r + 1) / _ang, true, r_out, r_in, _GLASS_SIDE, cell_center, true)
 		if not _cell_solid(face, c - 1, r, L):
-			_emit_side(st, face, float(c) / _ang, float(r) / _ang, float(r + 1) / _ang, true, r_out, r_in, Color.WHITE, cell_center, true)
+			_emit_side(st, face, float(c) / _ang, float(r) / _ang, float(r + 1) / _ang, true, r_out, r_in, _GLASS_SIDE, cell_center, true)
 		if not _cell_solid(face, c, r + 1, L):
-			_emit_side(st, face, float(r + 1) / _ang, float(c) / _ang, float(c + 1) / _ang, false, r_out, r_in, Color.WHITE, cell_center, true)
+			_emit_side(st, face, float(r + 1) / _ang, float(c) / _ang, float(c + 1) / _ang, false, r_out, r_in, _GLASS_SIDE, cell_center, true)
 		if not _cell_solid(face, c, r - 1, L):
-			_emit_side(st, face, float(r) / _ang, float(c) / _ang, float(c + 1) / _ang, false, r_out, r_in, Color.WHITE, cell_center, true)
+			_emit_side(st, face, float(r) / _ang, float(c) / _ang, float(c + 1) / _ang, false, r_out, r_in, _GLASS_SIDE, cell_center, true)
 		return
 
 	var color := _land_color(face, (float(c) + 0.5) / _ang, (float(r) + 0.5) / _ang)
@@ -547,9 +601,13 @@ func _land_color(face: int, u: float, v: float) -> Color:
 	return _LAND_FALLBACK
 
 
-# A biome texel reads as ocean/water if it's clearly blue-dominant.
+# A biome texel reads as ocean/water if it's clearly blue-dominant AND dark. Ocean
+# (mat 2 ≈ 26,89,166) is dark blue (luminance ≈ 0.31); bluish-white snow/ice (mat 6 ≈
+# 230,237,247) is also technically b>g>r but very bright (luminance ≈ 0.93), so without
+# the luminance gate the ice caps got misflagged as water and recoloured to land green.
 func _is_water_color(col: Color) -> bool:
-	return col.b > col.g and col.b > col.r
+	var lum := 0.299 * col.r + 0.587 * col.g + 0.114 * col.b
+	return lum < 0.6 and col.b > col.g and col.b > col.r
 
 
 # Equirect texel coords for a face cell (render_map.py projection), split out so

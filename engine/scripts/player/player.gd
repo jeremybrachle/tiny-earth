@@ -399,8 +399,22 @@ func _unhandled_input(event: InputEvent) -> void:
 		_crosshair_enabled = not _crosshair_enabled
 		_refresh_crosshair()
 
+	if event is InputEventKey and event.keycode == KEY_G and event.pressed and not event.echo:
+		_toggle_inner_glass()
+
 
 var _water_visible := true
+var _inner_glass_visible := true
+
+
+# Toggle the inner Dyson-shell water glass off/on (KEY_G). Off = hidden AND
+# non-collidable, so you fall straight through the water instead of breaking blocks.
+func _toggle_inner_glass() -> void:
+	var iv := _inner_globe_voxels()
+	if iv == null or not iv.has_method("set_glass_enabled"):
+		return
+	_inner_glass_visible = not _inner_glass_visible
+	iv.set_glass_enabled(_inner_glass_visible)
 
 
 func _toggle_water() -> void:

@@ -23,6 +23,9 @@ var _phase_label: String = ""
 # framerate just reads as a slideshow, with no input lag to feel.
 var _building: bool = false
 var _obs_cam: Camera3D = null
+# Load-time profiling (queue item 1, "measure first"): wall-clock for the whole build
+# and the inner-globe sub-build, printed alongside the per-phase CPU timing.
+var _build_start_ms: int = 0
 
 # Day/night cycle. The sun is a DirectionalLight3D; rotating it sweeps the light
 # direction across the planet. Press T to cycle the time scale (pause → 1× → 10×
@@ -217,6 +220,7 @@ func _start_build() -> void:
 		push_warning("World: VoxelPlanet missing — cannot run progressive build")
 		return
 	_building = true
+	_build_start_ms = Time.get_ticks_msec()
 	_build_loading_overlay()
 
 	var planet_r: float = float(planet.get("planet_radius"))
@@ -261,7 +265,14 @@ func _start_build() -> void:
 	var gen := get_node_or_null("PlanetGenerator")
 	if gen and gen.has_method("build_inner_voxels"):
 		_on_build_phase("Sculpting inner globe")
+		# Drive the loading bar's leading slice from the inner-globe build so it shows a
+		# percentage instead of sitting at 0% (the inner build runs before the crust).
+		var ivnodes := get_tree().get_nodes_in_group("inner_globe_voxels")
+		if not ivnodes.is_empty() and ivnodes[0].has_signal("build_progress"):
+			ivnodes[0].build_progress.connect(_on_inner_progress)
+		var inner_s := Time.get_ticks_msec()
 		await gen.build_inner_voxels()
+		print("[load] inner-globe build wall=%dms" % (Time.get_ticks_msec() - inner_s))
 
 	planet.build_planet_async(spawn_pos)
 
@@ -347,18 +358,30 @@ func _on_build_phase(label: String) -> void:
 		_loading_label.text = label
 
 
+# The inner-globe build owns the first _INNER_FRAC of the bar; the crust build owns
+# the rest. Both phases route through _set_loading_frac so the bar fills once, 0→100%.
+const _INNER_FRAC := 0.15
+
+
+func _on_inner_progress(done: int, total: int) -> void:
+	_set_loading_frac(float(done) / float(maxi(total, 1)) * _INNER_FRAC)
+
+
 func _on_build_progress(done: int, total: int) -> void:
+	_set_loading_frac(_INNER_FRAC + float(done) / float(maxi(total, 1)) * (1.0 - _INNER_FRAC))
+
+
+func _set_loading_frac(frac: float) -> void:
 	if _loading_bar:
-		_loading_bar.max_value = float(maxi(total, 1))
-		_loading_bar.value = float(done)
+		_loading_bar.max_value = 1.0
+		_loading_bar.value = frac
 	if _loading_label:
-		_loading_label.text = (
-			"%s  %d%%" % [_phase_label, int(100.0 * float(done) / float(maxi(total, 1)))]
-		)
+		_loading_label.text = "%s  %d%%" % [_phase_label, int(100.0 * frac)]
 
 
 func _on_build_finished() -> void:
 	_building = false
+	print("[load] total build wall=%dms" % (Time.get_ticks_msec() - _build_start_ms))
 	# Hide the loading-screen smooth inner globe now that play begins, revealing the
 	# diggable hollow voxel shell it was enclosing (kept hidden behind it during loading).
 	var gen := get_node_or_null("PlanetGenerator")

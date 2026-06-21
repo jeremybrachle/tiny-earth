@@ -132,8 +132,10 @@ func build_chunk(cx: int, cy: int) -> void:
 	var key := cx * chunks_per_edge + cy
 	if not _chunk_data.has(key):
 		return
-	_rebuild_chunk(cx, cy, key)
-	_build_chunk_collision(cx, cy)
+	# Reuse the land render mesh for collision instead of re-meshing the chunk a
+	# second time (same triangles — create_trimesh_shape ignores colour/uv/normals).
+	var land_mesh := _rebuild_chunk(cx, cy, key)
+	_build_chunk_collision(cx, cy, land_mesh)
 
 
 # Approximate world-space centre of a chunk on the INNER shell (just below the
@@ -494,13 +496,15 @@ func _build_chunk_collision_mesh(cx: int, cy: int) -> ArrayMesh:
 	return st.commit()
 
 
-func _build_chunk_collision(cx: int, cy: int) -> void:
+# `reuse` lets the bulk build pass the already-built land render mesh so collision
+# doesn't re-mesh the chunk; the dig/seam paths call this deferred with no mesh.
+func _build_chunk_collision(cx: int, cy: int, reuse: Mesh = null) -> void:
 	var key := cx * chunks_per_edge + cy
 	var old := _chunk_col_shapes.get(key) as CollisionShape3D
 	if old != null and is_instance_valid(old):
 		old.queue_free()
 		_chunk_col_shapes.erase(key)
-	var mesh := _build_chunk_collision_mesh(cx, cy)
+	var mesh := reuse if reuse != null else _build_chunk_collision_mesh(cx, cy)
 	if mesh == null or mesh.get_surface_count() == 0:
 		return
 	var shape := mesh.create_trimesh_shape()
@@ -866,7 +870,7 @@ func remove_top_voxel(col: int, row: int) -> bool:
 	return true
 
 
-func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
+func _rebuild_chunk(cx: int, cy: int, key: int) -> Mesh:
 	# Retrieve UNTYPED (no `as` cast) — `as` on a freed object throws "Trying to
 	# cast a freed object". Always erase the dict entry after freeing: the water
 	# instance is only re-stored when the water mesh is non-empty, so a chunk
@@ -883,7 +887,7 @@ func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
 		old_water.queue_free()
 	_water_chunk_insts.erase(key)
 	if not _chunk_data.has(key):
-		return
+		return null
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	_add_chunk_to_surface(st, _chunk_data[key], cx, cy)
@@ -905,3 +909,5 @@ func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
 		water_inst.material_override = _water_mat
 		add_child(water_inst)
 		_water_chunk_insts[key] = water_inst
+
+	return inst.mesh
