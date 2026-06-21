@@ -21,8 +21,22 @@ extends CanvasLayer
 # the shaders do.
 const COLOR_SPECS := [
 	{"name": "city_color", "target": "city", "def": Color(1.000, 0.800, 0.420)},
+	# Inner-globe water glass tint + transparency (inner_globe_glass.gdshader). The alpha
+	# channel IS the see-through amount, so this picker edits alpha.
+	{"name": "glass_color", "target": "glass", "def": Color(0.165, 0.278, 0.341, 0.420), "alpha": true},
 ]
 const FLOAT_SPECS := [
+	# Inner-globe diggable voxel volume (inner_globe_blocks.gdshader) — live brightness +
+	# block-edge controls, resolved via the "inner_globe_voxels" group.
+	{"name": "brightness", "target": "blocks", "def": 0.45, "lo": 0.0, "hi": 1.5},
+	{"name": "edge_dark", "target": "blocks", "def": 0.45, "lo": 0.0, "hi": 1.0},
+	{"name": "edge_width", "target": "blocks", "def": 0.06, "lo": 0.0, "hi": 0.25},
+	# Glass grid frame (top face only). Higher edge_dark = LIGHTER lines; lower
+	# edge_width = THINNER. "uniform" overrides the shader-param name so these don't
+	# collide with the blocks shader's edge_dark/edge_width in the _vals map.
+	{"name": "glass_edge_dark", "uniform": "edge_dark", "target": "glass", "def": 0.55, "lo": 0.0, "hi": 1.0},
+	{"name": "glass_edge_width", "uniform": "edge_width", "target": "glass", "def": 0.04, "lo": 0.0, "hi": 0.25},
+	{"name": "glass_edge_alpha", "uniform": "edge_alpha", "target": "glass", "def": 0.85, "lo": 0.0, "hi": 1.0},
 	{"name": "palette_brightness", "target": "globe", "def": 1.0, "lo": 0.2, "hi": 3.0},
 	{"name": "city_brightness", "target": "city", "def": 1.38, "lo": 0.0, "hi": 8.0},
 	{"name": "city_gain", "target": "city", "def": 7.35, "lo": 0.5, "hi": 8.0},
@@ -37,8 +51,9 @@ const FLOAT_SPECS := [
 
 var _globe_mat: ShaderMaterial
 var _sky_mat: ShaderMaterial  # sky_space.gdshader, for the shared "Stars" controls
-var _vals := {}  # uniform name → current value
-var _targets := {}  # uniform name → "globe" | "city" | "stars"
+var _vals := {}  # spec name → current value
+var _targets := {}  # spec name → "globe" | "city" | "stars" | "blocks" | "glass"
+var _uniforms := {}  # spec name → actual shader uniform name (defaults to the spec name)
 var _summary: Label
 
 
@@ -63,7 +78,20 @@ func setup(globe_mat: ShaderMaterial, sky_mat: ShaderMaterial = null) -> void:
 	title.text = "Cavity tuner  —  F3 to toggle"
 	vb.add_child(title)
 
-	_add_header(vb, "Globe palette")
+	_add_header(vb, "Inner globe (blocks)")
+	for spec in FLOAT_SPECS:
+		if spec["target"] == "blocks":
+			_add_float_row(vb, spec)
+
+	_add_header(vb, "Inner globe water (glass)")
+	for spec in COLOR_SPECS:
+		if spec["target"] == "glass":
+			_add_color_row(vb, spec)
+	for spec in FLOAT_SPECS:
+		if spec["target"] == "glass":
+			_add_float_row(vb, spec)
+
+	_add_header(vb, "Globe palette (loading preview)")
 	for spec in COLOR_SPECS:
 		if spec["target"] == "globe":
 			_add_color_row(vb, spec)
@@ -111,6 +139,7 @@ func _add_color_row(vb: VBoxContainer, spec: Dictionary) -> void:
 	var col: Color = spec["def"]
 	_vals[cname] = col
 	_targets[cname] = spec["target"]
+	_uniforms[cname] = spec.get("uniform", cname)
 
 	var hb := HBoxContainer.new()
 	var lbl := Label.new()
@@ -118,15 +147,16 @@ func _add_color_row(vb: VBoxContainer, spec: Dictionary) -> void:
 	lbl.custom_minimum_size.x = 150
 	hb.add_child(lbl)
 
+	var edit_alpha: bool = spec.get("alpha", false)
 	var cpb := ColorPickerButton.new()
 	cpb.color = col
-	cpb.edit_alpha = false
+	cpb.edit_alpha = edit_alpha
 	cpb.custom_minimum_size = Vector2(150, 26)
 	hb.add_child(cpb)
 	# Show the popup as a colour WHEEL (click the exact hue) rather than rectangles.
 	var picker := cpb.get_picker()
 	picker.picker_shape = ColorPicker.SHAPE_HSV_WHEEL
-	picker.edit_alpha = false
+	picker.edit_alpha = edit_alpha
 	cpb.color_changed.connect(func(c: Color) -> void:
 		_vals[cname] = c
 		_apply(cname, c)
@@ -139,6 +169,7 @@ func _add_float_row(vb: VBoxContainer, spec: Dictionary) -> void:
 	var val: float = spec["def"]
 	_vals[fname] = val
 	_targets[fname] = spec["target"]
+	_uniforms[fname] = spec.get("uniform", fname)
 
 	var hb := HBoxContainer.new()
 	var lbl := Label.new()
@@ -169,15 +200,40 @@ func _add_float_row(vb: VBoxContainer, spec: Dictionary) -> void:
 # shared star controls, BOTH the ceiling materials and the sky material at once.
 func _apply(uname: String, value: Variant) -> void:
 	var target: String = _targets[uname]
+	var real: String = _uniforms.get(uname, uname)
 	if target == "globe":
 		if _globe_mat:
-			_globe_mat.set_shader_parameter(uname, value)
+			_globe_mat.set_shader_parameter(real, value)
+		return
+	if target == "blocks":
+		var bm := _blocks_material()
+		if bm:
+			bm.set_shader_parameter(real, value)
+		return
+	if target == "glass":
+		var gm := _glass_material()
+		if gm:
+			gm.set_shader_parameter(real, value)
 		return
 	# "city" and "stars" both reach the ceiling materials; "stars" also reaches the sky.
 	for m in _city_materials():
-		m.set_shader_parameter(uname, value)
+		m.set_shader_parameter(real, value)
 	if target == "stars" and _sky_mat:
-		_sky_mat.set_shader_parameter(uname, value)
+		_sky_mat.set_shader_parameter(real, value)
+
+
+func _blocks_material() -> ShaderMaterial:
+	var iv := get_tree().get_first_node_in_group("inner_globe_voxels")
+	if iv and iv.has_method("get_block_material"):
+		return iv.get_block_material()
+	return null
+
+
+func _glass_material() -> ShaderMaterial:
+	var iv := get_tree().get_first_node_in_group("inner_globe_voxels")
+	if iv and iv.has_method("get_glass_material"):
+		return iv.get_glass_material()
+	return null
 
 
 func _city_materials() -> Array:
@@ -223,9 +279,12 @@ func _format_values() -> String:
 
 func _uniform_line(uname: String) -> String:
 	var v: Variant = _vals[uname]
+	var real: String = _uniforms.get(uname, uname)
 	if v is Color:
-		return "%s = vec3(%.3f, %.3f, %.3f);" % [uname, v.r, v.g, v.b]
-	return "%s = %.2f;" % [uname, v]
+		if _targets.get(uname, "") == "glass":
+			return "%s = vec4(%.3f, %.3f, %.3f, %.3f);" % [real, v.r, v.g, v.b, v.a]
+		return "%s = vec3(%.3f, %.3f, %.3f);" % [real, v.r, v.g, v.b]
+	return "%s = %.2f;" % [real, v]
 
 
 func _unhandled_input(event: InputEvent) -> void:

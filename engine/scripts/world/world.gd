@@ -359,6 +359,11 @@ func _on_build_progress(done: int, total: int) -> void:
 
 func _on_build_finished() -> void:
 	_building = false
+	# Hide the loading-screen smooth inner globe now that play begins, revealing the
+	# diggable hollow voxel shell it was enclosing (kept hidden behind it during loading).
+	var gen := get_node_or_null("PlanetGenerator")
+	if gen and gen.has_method("reveal_inner_globe"):
+		gen.reveal_inner_globe()
 	# Sun on now that the player takes control, oriented to dawn at the spawn
 	# (_sun_angle was set in _start_build) so the very first lit frame is correct.
 	# Re-enable the sun disc/corona in the sky shader so it reappears, rising east.

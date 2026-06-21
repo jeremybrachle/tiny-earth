@@ -32,6 +32,9 @@ const MINI_STEP_REACH := 0.9
 # The inner-globe skin's relief step is ~0.5 (inner_globe_voxels _voxel_size), so cap
 # the auto-step just above one block — a single step climbs, a taller wall doesn't.
 const MINI_STEP_MAX := 0.8
+# Upward ramp speed for the mini-globe auto-step — a smooth ascent (like the swim
+# shore-climb CLIMB_RISE_SPEED) instead of an instant move_and_collide lift.
+const MINI_STEP_RISE_SPEED := 4.0
 # Capsule is radius 0.4 / height 1.8 centred on the body origin, so the feet sit
 # half the height below global_position. The auto-step probe measures from the feet.
 const CAPSULE_HALF_HEIGHT := 0.9
@@ -47,6 +50,15 @@ const TP_HEIGHT := 1.6
 # the camera, so a straight-down aim in third-person reaches the block underfoot
 # instead of the one in front (the TP camera sits up-and-back and can't see it).
 const EYE_HEIGHT := 1.6
+# Minimum reticle distance in third person. The + is projected through the up-and-back
+# TP camera; a closer target parallax-swings fast as you pitch down, so we clamp the
+# distance to ~the camera-offset magnitude (sqrt(TP_HEIGHT² + TP_DISTANCE²) ≈ 4.3) to
+# keep the downward-aim rate uniform. Feel knob.
+const RETICLE_TP_MIN_DIST := 4.5
+# Fixed reticle distance on the inner mini-globe in third person (see _reticle_target):
+# the + marks this far along the aim ray so it tracks pitch smoothly/uniformly and never
+# snaps near the central core cube. Feel knob.
+const RETICLE_TP_DIST := 4.5
 
 const _CubeFaceScript = preload("res://scripts/planet/cube_face.gd")
 
@@ -64,6 +76,7 @@ var _pitch: float = -15.0
 var _surface_right := Vector3(0, 0, 1)  # parallel-transported; avoids pole singularity
 
 var _gravity_field: Node = null  # PlanetGenerator (in group "gravity_field"), looked up lazily
+var _inner_voxels: Node = null  # InnerGlobeVoxels (group "inner_globe_voxels"), looked up lazily
 var _water_overlay: ColorRect = null
 var _crosshair: Label = null
 var _crosshair_enabled := true  # user preference (H toggles it off entirely)
@@ -278,12 +291,17 @@ func _physics_process(delta: float) -> void:
 		if Input.is_action_just_pressed("ui_accept") and is_on_floor():
 			velocity += surface_normal * JUMP_VELOCITY
 
-		# Mini-globe only: auto-step up onto a one-block ledge directly ahead (no jump),
-		# then let the horizontal slide carry the player onto it.
-		if on_mini and is_on_floor() and wish_dir.length() > 0.01:
+		# Mini-globe only: smoothly auto-step onto a one-block ledge directly ahead (no
+		# jump, no teleport). When a step is detected, ramp upward along the surface
+		# normal like the swim shore-climb (CLIMB_RISE_SPEED) and the horizontal slide
+		# carries the player onto it; once the feet clear the lip the probe stops firing
+		# and gravity settles them down. Not gated to is_on_floor so the rise continues
+		# across the airborne frames of the ascent (it self-terminates when no step is
+		# ahead). Replaces the old instant move_and_collide lift, which felt like a snap.
+		if on_mini and wish_dir.length() > 0.01:
 			var rise := _mini_step_rise(wish_dir.normalized(), surface_normal)
 			if rise > 0.0:
-				move_and_collide(surface_normal * (rise + 0.05))
+				velocity = horiz_vel + surface_normal * MINI_STEP_RISE_SPEED
 
 		move_and_slide()
 		_swim_bob = 0.0
@@ -438,24 +456,48 @@ func _update_reticle() -> void:
 func _reticle_target():
 	if not planet:
 		return null
+	var eye := global_position + global_basis.y * EYE_HEIGHT
+	var aim := -camera.global_basis.z
 	var center := planet.global_position
 	var radius := (global_position - center).length()
+
+	# Inner mini-globe, third person: the magenta core sits at the centre of gravity, so
+	# the analytic shell (and the live hit) degenerate near it — the near/far roots flip
+	# and the + snaps. And because the TP camera is up-and-back, a close target parallax-
+	# swings fast as you pitch down (the "accelerating" aim). Marking a point at a FIXED
+	# distance along the eye-ray removes both: the + tracks the aim direction smoothly and
+	# uniformly, matching first person (where eye == camera, so there's no parallax). The
+	# dig itself still uses the live raycast, so digging is unaffected.
+	if not _first_person and radius < _planet_radius() * 0.5:
+		return eye + aim * RETICLE_TP_DIST
+
+	# Distance along the eye-ray to the point the + marks. Prefer the analytic shell
+	# (sphere of the player's current radius) on the outer surface — it's stable when a
+	# nearby block breaks. Otherwise the live raycast.
+	var t := -1.0
 	if radius > _planet_radius() * 0.9:
-		var eye := global_position + global_basis.y * EYE_HEIGHT
-		var aim := -camera.global_basis.z
 		var oc := eye - center
 		var b := oc.dot(aim)
 		var c := oc.dot(oc) - radius * radius
 		var disc := b * b - c
 		if disc >= 0.0:
 			var sq := sqrt(disc)
-			var t := -b - sq
-			if t < 0.0:
-				t = -b + sq
-			if t >= 0.0 and t <= DIG_REACH:
-				return eye + aim * t
-	var hit := _aim_raycast()
-	return hit.position if not hit.is_empty() else null
+			var tt := -b - sq
+			if tt < 0.0:
+				tt = -b + sq
+			if tt >= 0.0 and tt <= DIG_REACH:
+				t = tt
+	if t < 0.0:
+		var hit := _aim_raycast()
+		if hit.is_empty():
+			return null
+		t = (Vector3(hit["position"]) - eye).length()
+
+	# Outer-surface third person: same parallax bound (clamp the distance to ~the camera-
+	# offset magnitude) so the downward-aim rate stays uniform.
+	if not _first_person:
+		t = maxf(t, RETICLE_TP_MIN_DIST)
+	return eye + aim * t
 
 
 # Raycast from the eye and remove the voxel the player is aiming at (the one the +
@@ -473,6 +515,13 @@ func _break_voxel_aimed() -> void:
 	var rel: Vector3 = inside - planet.global_position
 	var r: float = rel.length()
 	var unit: Vector3 = rel.normalized()
+
+	# Inner mini-globe: a solid diggable voxel volume with its own dig routing. If the
+	# aim landed inside it, carve there and stop (don't fall through to the shell logic).
+	var iv := _inner_globe_voxels()
+	if iv and r <= iv.surface_radius():
+		iv.dig_at(hit.position, hit.normal)
+		return
 
 	var fr: Array = _CubeFaceScript.unit_to_face_col_row(unit, planet.resolution)
 	var face := int(fr[0])
@@ -503,6 +552,11 @@ func _break_voxel_aimed() -> void:
 # Chains to the inner face once the outer column is fully excavated.
 func _break_voxel_underfoot() -> void:
 	if not planet:
+		return
+	# Inner mini-globe: eat one crust layer straight down through the diggable volume.
+	var iv := _inner_globe_voxels()
+	if iv and global_position.length() < _planet_radius() * 0.5:
+		iv.dig_top((global_position - iv.global_position).normalized())
 		return
 	var result: Array = _CubeFaceScript.unit_to_face_col_row(
 		global_position.normalized(), planet.resolution
@@ -579,6 +633,15 @@ func _gravity_dir() -> Vector3:
 func _planet_radius() -> float:
 	var raw = planet.get("planet_radius") if planet else null
 	return float(raw) if raw != null else 256.0
+
+
+# The inner-globe diggable voxel volume (InnerGlobeVoxels), looked up lazily via its
+# group and cached. Returns null until it's been added to the tree (during the build).
+func _inner_globe_voxels() -> Node:
+	if _inner_voxels == null or not is_instance_valid(_inner_voxels):
+		var nodes := get_tree().get_nodes_in_group("inner_globe_voxels")
+		_inner_voxels = nodes[0] if not nodes.is_empty() else null
+	return _inner_voxels
 
 
 func _project_to_plane(v: Vector3, normal: Vector3) -> Vector3:

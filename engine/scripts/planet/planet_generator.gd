@@ -87,6 +87,15 @@ func build_inner_voxels() -> void:
 		await _inner_voxels.build()
 
 
+# Hide the loading-screen smooth globe, revealing the diggable hollow voxel shell it was
+# enclosing. Called at game start (world._on_build_finished) — kept visible through the
+# whole loading screen so the player only ever sees the smooth globe until they go find
+# the shell. Hidden (not freed) so the F3 globe-palette tuner's material ref stays valid.
+func reveal_inner_globe() -> void:
+	if _inner_smooth:
+		_inner_smooth.visible = false
+
+
 func generate_planet(stage_id: int) -> void:
 	active_stage = stage_id
 	add_to_group("gravity_field")
@@ -128,12 +137,24 @@ func _build_inner_sphere() -> void:
 	var inner := StaticBody3D.new()
 	inner.name = "InnerPlanet"
 
+	# The diggable hollow voxel shell (InnerGlobeVoxels), built first on the loading
+	# screen (build_inner_voxels). Created before the smooth sphere so the smooth sphere
+	# can be sized to ENCLOSE it (see below). NO rotation — it uses the crust's geographic
+	# projection directly (like the outer faces), unlike the smooth sphere.
+	var voxels := preload("res://scripts/planet/inner_globe_voxels.gd").new()
+	voxels.name = "InnerGlobeVoxels"
+	var cpe := _read_config_int("chunks_per_edge", 16)
+	voxels.setup(_inner_r, CHUNK_SIZE * cpe, cpe)
+	inner.add_child(voxels)
+	_inner_voxels = voxels
+
 	var mesh_inst := MeshInstance3D.new()
 	var sphere := SphereMesh.new()
-	# A hair inside the voxel skin (which sits at _inner_r and up) so flat ocean tiles
-	# — also at _inner_r — don't z-fight with this surface. Invisible offset at this
-	# radius; it just tucks the smooth sphere safely beneath the always-on skin.
-	var smooth_r := _inner_r * 0.997
+	# The smooth globe is the LOADING-SCREEN preview only: sized to fully ENCLOSE the
+	# diggable voxel shell so the player sees only the nice smooth Earth while it builds,
+	# not the blocky shell assembling. It's hidden (build_inner_voxels) once the game
+	# starts, revealing the diggable shell.
+	var smooth_r: float = voxels.surface_radius() * 1.02
 	sphere.radius = smooth_r
 	sphere.height = smooth_r * 2.0
 	# Higher tessellation so the core silhouette + UV mapping stay crisp up close
@@ -169,29 +190,20 @@ func _build_inner_sphere() -> void:
 	inner.add_child(mesh_inst)
 	_inner_smooth = mesh_inst
 
-	# The always-on blocky 1:1 voxel skin over the same surface data + palette, built
-	# first on the loading screen (build_inner_voxels). NO rotation — it uses the
-	# crust's geographic projection directly (like the outer faces), unlike the
-	# smooth sphere which needs a UV-seam rotation.
-	var voxels := preload("res://scripts/planet/inner_globe_voxels.gd").new()
-	voxels.name = "InnerGlobeVoxels"
-	var cpe := _read_config_int("chunks_per_edge", 16)
-	voxels.setup(_inner_r, CHUNK_SIZE * cpe, cpe)
-	inner.add_child(voxels)
-	_inner_voxels = voxels
-
-	var col := CollisionShape3D.new()
-	var shape := SphereShape3D.new()
-	shape.radius = _inner_r
-	col.shape = shape
-	inner.add_child(col)
+	# No base SphereShape3D collider: the diggable voxel shell (InnerGlobeVoxels) carries
+	# its own per-chunk trimesh collision, and a smooth sphere collider here would block
+	# digging into the crust.
 
 	add_child(inner)
 
-	# Light the hollow cavity from the core.
+	# Light the hollow cavity from the core, tinted to match the glowing sun-yellow core
+	# cube (co-located at the origin) so it reads as the light source. (The inner globe
+	# shell is unshaded/self-lit — its brightness is the shader `brightness` uniform; this
+	# light is for the shaded cavity walls + the shell undersides facing the core.)
 	var light := OmniLight3D.new()
 	light.omni_range = _planet_radius
-	light.light_energy = 5.0
+	light.light_energy = 6.0
+	light.light_color = Color(1.0, 0.92, 0.62)
 	add_child(light)
 
 
