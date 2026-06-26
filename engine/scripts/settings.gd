@@ -15,6 +15,17 @@ const PATH := "user://settings.cfg"
 const WATER_SECTION := "water"
 const WATER_SHADER_PATH := "res://shaders/water.gdshader"
 
+# Graphics quality preset. "high" = the full look (SSIL + SSAO + glow + realtime
+# twinkling sky + 4-split shadows); "low" drops the expensive screen-space passes
+# (SSIL/SSAO off, incremental sky, fewer/shorter shadow splits) for weaker GPUs and
+# to run cooler. World.set_graphics_quality() applies it live to the WorldEnvironment;
+# World reads get_quality() at setup so a saved choice is in effect from the first frame.
+const GRAPHICS_SECTION := "graphics"
+const QUALITY_KEY := "quality"
+const QUALITY_HIGH := "high"
+const QUALITY_LOW := "low"
+const QUALITY_DEFAULT := QUALITY_HIGH
+
 # Param -> baked default. Single source of truth: pause_menu reads its defaults
 # from here, so the slider defaults and "Reset to Default" can't drift from these.
 const WATER_DEFAULTS := {
@@ -47,6 +58,16 @@ func set_water(pname: String, value: float) -> void:
 func reset_water() -> void:
 	for pname in WATER_DEFAULTS:
 		_cfg.set_value(WATER_SECTION, pname, WATER_DEFAULTS[pname])
+	_cfg.save(PATH)
+
+
+# Saved graphics quality preset ("high"/"low"), or the default if never changed.
+func get_quality() -> String:
+	return str(_cfg.get_value(GRAPHICS_SECTION, QUALITY_KEY, QUALITY_DEFAULT))
+
+
+func set_quality(q: String) -> void:
+	_cfg.set_value(GRAPHICS_SECTION, QUALITY_KEY, q)
 	_cfg.save(PATH)
 
 

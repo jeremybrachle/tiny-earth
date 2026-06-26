@@ -8,17 +8,36 @@
 
 config_version=5
 
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
+
 [application]
 
 config/name="Tiny Earth"
 run/main_scene="res://scenes/main_menu.tscn"
-config/features=PackedStringArray("4.3", "Forward Plus")
+config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
+; Cap the framerate everywhere (the menu had no cap → rendered flat-out → GPU at 100%,
+; fan blaring). 60 project-wide also covers the menu/loading screen, not just gameplay.
+; Lower this to 30 if the machine still runs hot.
+run/max_fps=60
 
 [autoload]
 
 Music="*res://scripts/audio/music.gd"
 GameSettings="*res://scripts/settings.gd"
+PerfOverlay="*res://scripts/ui/perf_overlay.gd"
+
+[display]
+
+; Explicit V-Sync ON (this is the Godot default, but pinned here so it can't silently
+; be off — without it the GPU renders unbounded between frames, which heats the machine).
+window/vsync/vsync_mode=1
+
+[dotnet]
+
+project/assembly_name="Tiny Earth"
 
 [input]
 

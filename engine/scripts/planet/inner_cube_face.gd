@@ -15,18 +15,23 @@ var planet_radius: float = 256.0
 var face_id: int = 0
 var chunks_per_edge: int = 16
 
+# Inner-shell palette — deliberately MUTED vs the outer surface (cube_face.gd):
+# pulled toward grey and a touch darker so the cavity reads as a dim, subterranean
+# under-world rather than a second bright Earth. The blue is a desaturated slate
+# (less vivid than the outer ocean), and the ocean CEILING (mat 11) is darker still
+# so the projected starfield reads against it (see inner_voxel.gdshader).
 const MAT_COLORS := {
-	1: Color(0.25, 0.55, 0.20),  # Land fallback
-	2: Color(0.10, 0.35, 0.65),  # Ocean / water body
-	3: Color(0.85, 0.75, 0.45),  # Desert/Sand
-	4: Color(0.40, 0.65, 0.25),  # Temperate
-	5: Color(0.15, 0.40, 0.15),  # Forest
-	6: Color(0.90, 0.93, 0.97),  # Snow/Ice
-	7: Color(0.10, 0.48, 0.12),  # Tropical
-	8: Color(0.68, 0.62, 0.22),  # Savanna
-	9: Color(0.52, 0.48, 0.44),  # Rock/Mountain
-	10: Color(0.28, 0.22, 0.16),  # Seafloor
-	11: Color(0.10, 0.35, 0.65),  # Ocean ceiling (solid stand-in for mat 2 at depth 15)
+	1: Color(0.17, 0.25, 0.15),  # Land fallback
+	2: Color(0.10, 0.18, 0.27),  # Ocean / water body (muted slate — water mesh uses its own shader)
+	3: Color(0.40, 0.37, 0.27),  # Desert/Sand
+	4: Color(0.21, 0.30, 0.17),  # Temperate
+	5: Color(0.13, 0.21, 0.13),  # Forest
+	6: Color(0.40, 0.44, 0.49),  # Snow/Ice (muted grey-blue — no white tint on the ceiling)
+	7: Color(0.12, 0.25, 0.14),  # Tropical
+	8: Color(0.33, 0.31, 0.20),  # Savanna
+	9: Color(0.25, 0.24, 0.22),  # Rock/Mountain
+	10: Color(0.16, 0.14, 0.12),  # Seafloor
+	11: Color(0.04, 0.08, 0.15),  # Ocean ceiling (dark slate — starfield backdrop)
 }
 
 var _mat: Material = null
@@ -49,8 +54,9 @@ var _opened_columns := {}  # gi key → true for columns with outer shell fully 
 # level air; never flow upward. Bounded to depth [0, MAX_FLOW_DEPTH] so the
 # hollow centre stays dry. The ocean is an infinite source (water cells are
 # never removed) — communicating-vessel fill, not conservative finite volume.
-const FLOW_HZ := 10.0  # settling ticks per second
-const FLOW_PER_TICK := 64  # max cells processed per tick (per face)
+const FLOW_HZ := 6.0  # settling ticks per second
+const FLOW_PER_TICK := 8  # max cells processed per tick (per face) — low so a dug
+# pocket fills with a visible creep instead of snapping full instantly
 const MAX_FLOW_DEPTH := 15  # never fill deeper than this (keep centre dry)
 var _flow_timer: Timer = null
 var _active_water := {}  # gk → [c, r, d]  (membership + payload)
@@ -58,8 +64,10 @@ var _active_order: Array = []  # FIFO of gk for round-robin draining
 
 
 func _ready() -> void:
-	pass  # The build is driven externally by VoxelPlanet.build_planet_async() so
-	# the planet can assemble progressively across frames (loading screen).
+	# Build driven externally by VoxelPlanet.build_planet_async(). The only per-frame
+	# work is flushing the amortized dig-collision queue (_physics_process), idle until
+	# a dig marks a chunk dirty (see _mark_collision_dirty).
+	set_physics_process(false)
 
 
 # --- Staged build API (driven by VoxelPlanet's orchestrator) ---------------
@@ -70,6 +78,20 @@ func _ready() -> void:
 func init_face() -> void:
 	_mat = ShaderMaterial.new()
 	(_mat as ShaderMaterial).shader = load("res://shaders/inner_voxel.gdshader") as Shader
+	# Same baked real star map as the sky → the ocean-ceiling projection shows the
+	# identical constellations. The file_exists guard avoids load() errors before
+	# the maps are baked (starmap.py / citylights.py) — the shaders just show no
+	# stars/cities until then.
+	if FileAccess.file_exists("res://planet/star_map.png"):
+		var star_tex := load("res://planet/star_map.png") as Texture2D
+		if star_tex:
+			(_mat as ShaderMaterial).set_shader_parameter("star_map", star_tex)
+	# Real night-lights for the land ceiling tiles, sampled by geographic direction
+	# so cities land on the real continents.
+	if FileAccess.file_exists("res://planet/city_lights.png"):
+		var city_tex := load("res://planet/city_lights.png") as Texture2D
+		if city_tex:
+			(_mat as ShaderMaterial).set_shader_parameter("city_tex", city_tex)
 	_water_mat = ShaderMaterial.new()
 	(_water_mat as ShaderMaterial).shader = load("res://shaders/water.gdshader") as Shader
 
@@ -86,6 +108,12 @@ func init_face() -> void:
 	_flow_timer.one_shot = false
 	_flow_timer.timeout.connect(_on_flow_tick)
 	add_child(_flow_timer)
+
+
+# The ceiling material (inner_voxel.gdshader) for this face, so the F3 cavity
+# tuner (inner_globe_debug.gd) can push city-light params live across all faces.
+func get_ceiling_material() -> ShaderMaterial:
+	return _mat as ShaderMaterial
 
 
 func load_chunks() -> void:
@@ -106,8 +134,10 @@ func build_chunk(cx: int, cy: int) -> void:
 	var key := cx * chunks_per_edge + cy
 	if not _chunk_data.has(key):
 		return
-	_rebuild_chunk(cx, cy, key)
-	_build_chunk_collision(cx, cy)
+	# Reuse the land render mesh for collision instead of re-meshing the chunk a
+	# second time (same triangles — create_trimesh_shape ignores colour/uv/normals).
+	var land_mesh := _rebuild_chunk(cx, cy, key)
+	_build_chunk_collision(cx, cy, land_mesh)
 
 
 # Approximate world-space centre of a chunk on the INNER shell (just below the
@@ -224,7 +254,8 @@ func _emit_radial_face(
 	v1: float,
 	r: float,
 	color: Color,
-	outward: bool
+	outward: bool,
+	ceiling_uv2: Vector2 = Vector2.ZERO
 ) -> void:
 	var p00 := _CubeFaceScript.face_uv_to_unit(face_id, u0, v0) * r
 	var p10 := _CubeFaceScript.face_uv_to_unit(face_id, u1, v0) * r
@@ -234,6 +265,10 @@ func _emit_radial_face(
 	if not outward:
 		normal = -normal
 	st.set_color(color)
+	# Ceiling tag for inner_voxel.gdshader. x: 0 = plain, 1 = land (city lights),
+	# 2 = ocean (starfield). y: per-tile random seed for the land light. Persists
+	# across the add_vertex calls below.
+	st.set_uv2(ceiling_uv2)
 	if (p10 - p00).cross(p11 - p00).dot(normal) > 0.0:
 		st.set_uv(Vector2(0, 0))
 		st.add_vertex(p00)
@@ -312,6 +347,7 @@ func _emit_side_face(
 	var expected_out := out_pt - mid_pt
 
 	st.set_color(color)
+	st.set_uv2(Vector2.ZERO)  # side walls are never ceiling — plain shading
 	if (pa_top - pa_base).cross(pb_top - pa_base).dot(expected_out) > 0.0:
 		st.set_uv(Vector2(0, 0))
 		st.add_vertex(pa_base)
@@ -382,7 +418,14 @@ func _add_chunk_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int, cy: 
 				# (the cavity beneath the deepest rock, or an excavated pocket).
 				if not _is_solid_at(cx, cy, data, lc, lr, depth + 1):
 					var under := Color(color.r * 0.5, color.g * 0.5, color.b * 0.5, color.a)
-					_emit_radial_face(st, u0, v0, u1, v1, r_in, under, false)
+					# Only the innermost layer (depth 15) IS the cavity ceiling: tag it
+					# (UV2.x) so inner_voxel.gdshader lights it — land → warm city lights
+					# (1), ocean (mat 10/11) → cool star projection (2). Both share one
+					# twinkling field, coloured per tile. Dug interior walls stay plain.
+					var ceiling_uv2 := Vector2.ZERO
+					if depth == CHUNK_SIZE - 1:
+						ceiling_uv2 = Vector2(2.0, 0.0) if (m == 10 or m == 11) else Vector2(1.0, 0.0)
+					_emit_radial_face(st, u0, v0, u1, v1, r_in, under, false, ceiling_uv2)
 
 				# Four lateral faces — exposed where the side neighbour is open.
 				for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
@@ -455,13 +498,47 @@ func _build_chunk_collision_mesh(cx: int, cy: int) -> ArrayMesh:
 	return st.commit()
 
 
-func _build_chunk_collision(cx: int, cy: int) -> void:
+# --- Amortized dig-collision rebuilds --------------------------------------
+# Mirror of CubeFace's amortizer: interactive digs MARK the touched chunk dirty
+# rather than queuing an immediate full collider rebuild (per-voxel collision
+# re-mesh + create_trimesh_shape), so repeated digs into one chunk collapse to a
+# single rebuild and a burst spreads across frames. Render mesh updates instantly;
+# only the collider lags a frame or two. The bulk build + seam pass still rebuild
+# collision directly (they must complete before play begins).
+var _col_dirty := {}  # int key (cx*CPE + cy) → true, chunks awaiting a collider rebuild
+const _COL_REBUILDS_PER_FRAME := 2
+
+
+func _mark_collision_dirty(cx: int, cy: int) -> void:
+	_col_dirty[cx * chunks_per_edge + cy] = true
+	set_physics_process(true)  # wake the flusher (it disables itself when drained)
+
+
+func _physics_process(_delta: float) -> void:
+	if _col_dirty.is_empty():
+		set_physics_process(false)
+		return
+	var done := 0
+	for key in _col_dirty.keys():  # keys() is a copy — safe to erase while iterating
+		if done >= _COL_REBUILDS_PER_FRAME:
+			break
+		_col_dirty.erase(key)
+		_build_chunk_collision(key / chunks_per_edge, key % chunks_per_edge)
+		done += 1
+	if _col_dirty.is_empty():
+		set_physics_process(false)
+
+
+# `reuse` lets the bulk build pass the already-built land render mesh so collision
+# doesn't re-mesh the chunk; the dig/seam paths mark the chunk dirty and this
+# rebuilds it fresh (reuse == null) from the amortized flusher.
+func _build_chunk_collision(cx: int, cy: int, reuse: Mesh = null) -> void:
 	var key := cx * chunks_per_edge + cy
 	var old := _chunk_col_shapes.get(key) as CollisionShape3D
 	if old != null and is_instance_valid(old):
 		old.queue_free()
 		_chunk_col_shapes.erase(key)
-	var mesh := _build_chunk_collision_mesh(cx, cy)
+	var mesh := reuse if reuse != null else _build_chunk_collision_mesh(cx, cy)
 	if mesh == null or mesh.get_surface_count() == 0:
 		return
 	var shape := mesh.create_trimesh_shape()
@@ -676,7 +753,7 @@ func _rebuild_seam_neighbors(col: int, row: int) -> void:
 		var nkey: int = ncx * nb.chunks_per_edge + ncy
 		if nb._chunk_data.has(nkey):
 			nb._rebuild_chunk(ncx, ncy, nkey)
-			nb._build_chunk_collision.call_deferred(ncx, ncy)
+			nb._mark_collision_dirty(ncx, ncy)
 
 
 # Re-mesh every chunk the flood fill wrote water into. The BFS can propagate
@@ -723,7 +800,7 @@ func remove_voxel(col: int, row: int, depth: int) -> bool:
 	if not has_solid:
 		open_column(col, row)
 		return true
-	_build_chunk_collision.call_deferred(cx, cy)
+	_mark_collision_dirty(cx, cy)
 	if not rebuilt.has(key):
 		_rebuild_chunk(cx, cy, key)
 		rebuilt[key] = true
@@ -744,7 +821,7 @@ func open_column(col: int, row: int) -> void:
 	var cx := col / CHUNK_SIZE
 	var cy := row / CHUNK_SIZE
 	_opened_columns[col * _face_res + row] = true
-	_build_chunk_collision.call_deferred(cx, cy)
+	_mark_collision_dirty(cx, cy)
 	_rebuild_chunk(cx, cy, cx * chunks_per_edge + cy)
 	for nb in [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]:
 		var nx: int = nb[0]
@@ -810,7 +887,7 @@ func remove_top_voxel(col: int, row: int) -> bool:
 	_top_depth_grid[gi] = new_floor
 	_top_mat_grid[gi] = new_mat
 
-	_build_chunk_collision.call_deferred(cx, cy)
+	_mark_collision_dirty(cx, cy)
 	if not rebuilt.has(key):
 		_rebuild_chunk(cx, cy, key)
 		rebuilt[key] = true
@@ -827,7 +904,7 @@ func remove_top_voxel(col: int, row: int) -> bool:
 	return true
 
 
-func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
+func _rebuild_chunk(cx: int, cy: int, key: int) -> Mesh:
 	# Retrieve UNTYPED (no `as` cast) — `as` on a freed object throws "Trying to
 	# cast a freed object". Always erase the dict entry after freeing: the water
 	# instance is only re-stored when the water mesh is non-empty, so a chunk
@@ -844,7 +921,7 @@ func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
 		old_water.queue_free()
 	_water_chunk_insts.erase(key)
 	if not _chunk_data.has(key):
-		return
+		return null
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	_add_chunk_to_surface(st, _chunk_data[key], cx, cy)
@@ -866,3 +943,5 @@ func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
 		water_inst.material_override = _water_mat
 		add_child(water_inst)
 		_water_chunk_insts[key] = water_inst
+
+	return inst.mesh

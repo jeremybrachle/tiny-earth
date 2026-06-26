@@ -2,8 +2,42 @@ extends CharacterBody3D
 
 const GRAVITY_STRENGTH := 20.0
 const WALK_SPEED := 5.0
-const SWIM_SPEED := 2.5
+const SWIM_SPEED := 4.5
 const JUMP_VELOCITY := 8.0
+
+# Swimming vertical motion. Default is to SINK (SINK_ACCEL → SINK_MAX terminal).
+# Holding Space rises smoothly to the surface (SWIM_RISE_SPEED) and then floats
+# there without bobbing — the vertical velocity is damped to rest and no gravity is
+# applied while at the surface, so open-water surface swimming is smooth. The only
+# upward launch is the climb-out: holding Space while LOOKING at a one-block shore
+# ledge lifts the player up and onto it (CLIMB_RISE_SPEED) so you can leave the
+# water without flying. WATER_VERTICAL_RATE is the damping rate for a smooth rise.
+const SWIM_RISE_SPEED := 2.5
+const CLIMB_RISE_SPEED := 5.0
+const SINK_ACCEL := 8.0
+const SINK_MAX := 4.0
+const WATER_VERTICAL_RATE := 8.0
+# Shore-climb probe. A point STEP_REACH ahead of the player (in the look direction)
+# is checked for a solid top within the climb window [STEP_MIN_DOWN, STEP_MAX_UP]
+# measured from the feet. The window reaches BELOW the feet too, so a shelf sitting
+# a block or two under the surface still counts as climbable.
+const STEP_REACH := 1.6
+const STEP_MAX_UP := 2.3
+const STEP_MIN_DOWN := -2.0
+# Auto-step (mini-globe ONLY): on the small inner globe the blocky relief is all
+# ~one-block steps, so we lift the player straight onto a step directly ahead while
+# walking — no jump — the walking analogue of the swim climb-out. The outer surface
+# is deliberately left jump-only so real terrain still reads as terrain.
+const MINI_STEP_REACH := 0.9
+# The inner-globe skin's relief step is ~0.5 (inner_globe_voxels _voxel_size), so cap
+# the auto-step just above one block — a single step climbs, a taller wall doesn't.
+const MINI_STEP_MAX := 0.8
+# Upward ramp speed for the mini-globe auto-step — a smooth ascent (like the swim
+# shore-climb CLIMB_RISE_SPEED) instead of an instant move_and_collide lift.
+const MINI_STEP_RISE_SPEED := 4.0
+# Capsule is radius 0.4 / height 1.8 centred on the body origin, so the feet sit
+# half the height below global_position. The auto-step probe measures from the feet.
+const CAPSULE_HALF_HEIGHT := 0.9
 const FLY_SPEED := WALK_SPEED * 5.0
 
 const MOUSE_SENSITIVITY := 0.08  # degrees per pixel
@@ -11,6 +45,20 @@ const PITCH_MIN := -89.0
 const PITCH_MAX := 89.0
 const TP_DISTANCE := 4.0
 const TP_HEIGHT := 1.6
+# Eye height above the feet — matches the first-person camera's local Y. The dig
+# ray and the reticle projection both originate here (see _aim_raycast), NOT from
+# the camera, so a straight-down aim in third-person reaches the block underfoot
+# instead of the one in front (the TP camera sits up-and-back and can't see it).
+const EYE_HEIGHT := 1.6
+# Minimum reticle distance in third person. The + is projected through the up-and-back
+# TP camera; a closer target parallax-swings fast as you pitch down, so we clamp the
+# distance to ~the camera-offset magnitude (sqrt(TP_HEIGHT² + TP_DISTANCE²) ≈ 4.3) to
+# keep the downward-aim rate uniform. Feel knob.
+const RETICLE_TP_MIN_DIST := 4.5
+# Fixed reticle distance on the inner mini-globe in third person (see _reticle_target):
+# the + marks this far along the aim ray so it tracks pitch smoothly/uniformly and never
+# snaps near the central core cube. Feel knob.
+const RETICLE_TP_DIST := 4.5
 
 const _CubeFaceScript = preload("res://scripts/planet/cube_face.gd")
 
@@ -28,6 +76,7 @@ var _pitch: float = -15.0
 var _surface_right := Vector3(0, 0, 1)  # parallel-transported; avoids pole singularity
 
 var _gravity_field: Node = null  # PlanetGenerator (in group "gravity_field"), looked up lazily
+var _inner_voxels: Node = null  # InnerGlobeVoxels (group "inner_globe_voxels"), looked up lazily
 var _water_overlay: ColorRect = null
 var _crosshair: Label = null
 var _crosshair_enabled := true  # user preference (H toggles it off entirely)
@@ -43,7 +92,12 @@ func _ready() -> void:
 	if not planet:
 		planet = get_node_or_null("../VoxelPlanet") as StaticBody3D
 	if planet:
-		var surface_normal := (global_position - planet.global_position).normalized()
+		# Spawn direction comes from the location picked on the menu (carried in
+		# SpawnPoints.selected_index), not the baked .tscn transform — so the
+		# Player transform in world.tscn is just a sensible fallback now. Default
+		# index 0 is central Kansas, so launching world.tscn directly is unchanged.
+		var spawn: Dictionary = SpawnPoints.selected()
+		var surface_normal := Coords.latlon_to_unit(spawn["lat"], spawn["lon"])
 		var axis := Vector3.UP.cross(surface_normal)
 		if axis.length() > 0.001:
 			global_basis = global_basis.rotated(
@@ -59,7 +113,10 @@ func _ready() -> void:
 	add_child(cl)
 	_water_overlay = ColorRect.new()
 	_water_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_water_overlay.color = Color(0.02, 0.10, 0.32, 0.60)
+	# Fog-like underwater murk: a desaturated blue-green that reads as depth haze
+	# rather than a flat coloured pane. Alpha kept below the old 0.60 so the surface
+	# line and nearby geometry stay legible once submerged.
+	_water_overlay.color = Color(0.05, 0.20, 0.30, 0.52)
 	_water_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_water_overlay.visible = false
 	cl.add_child(_water_overlay)
@@ -69,11 +126,14 @@ func _ready() -> void:
 	add_child(hud_cl)
 	_crosshair = Label.new()
 	_crosshair.text = "+"
-	_crosshair.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_crosshair.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_crosshair.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# Top-left anchored so we can move it to the dig target each frame (_update_reticle
+	# re-projects the eye-ray's first voxel hit to screen). In first-person the eye and
+	# camera coincide, so the hit projects to screen-centre and the + stays put; in
+	# third-person it drifts toward the player's feet to mark where digging lands.
+	_crosshair.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	_crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_crosshair.add_theme_font_size_override("font_size", 24)
+	_crosshair.position = get_viewport().get_visible_rect().size * 0.5
 	# Hidden until the world finishes building (see on_world_ready); it would
 	# otherwise float over the loading screen. H toggles it off entirely in-game.
 	_crosshair.visible = false
@@ -135,7 +195,15 @@ func _physics_process(delta: float) -> void:
 	# never reads as "swimming".
 	var planet_r := _planet_radius()
 	var near_surface := global_position.length() > planet_r * 0.9
-	_swimming = (not _flying) and near_surface and _surface_mat_at(global_position) == 2
+	# On the inner mini-globe (radius ≈ planet_r * 0.25) the relief is one-block steps
+	# we auto-step; nowhere else qualifies (the inner-shell floor sits far higher).
+	var on_mini := global_position.length() < planet_r * 0.5
+	# Body-in-water samples. chest_wet/body_wet tell "in the water" from "in the air
+	# above the ocean" in the swim branch; body_wet also keeps swim+climb control
+	# alive as you reach a shore where the column underfoot already reads as land.
+	var chest_wet := _voxel_mat_at(global_position + surface_normal * 0.9) == 2
+	var body_wet := chest_wet or _voxel_mat_at(global_position + surface_normal * 0.1) == 2
+	_swimming = (not _flying) and near_surface and (_surface_mat_at(global_position) == 2 or body_wet)
 	# Underwater tint shows only when the camera is INSIDE an actual water voxel,
 	# not merely somewhere below an ocean column. The old radius-gated heuristic
 	# false-fired when flying through inner-shell rock under ocean tiles.
@@ -161,24 +229,45 @@ func _physics_process(delta: float) -> void:
 		velocity = Vector3.ZERO
 		_swim_bob = 0.0
 	elif _swimming:
-		# Gravity still keeps the player on the sphere surface. Movement is
-		# slower and jumping is replaced by a gentle surface-push (wading feel).
-		if not is_on_floor():
-			velocity += gravity_dir * GRAVITY_STRENGTH * delta
-
 		var wish_dir := cam_fwd * -input.y + cam_right * input.x
-		var vert_vel := velocity.project(gravity_dir)
-		var horiz_vel := velocity - vert_vel
+		var horiz_vel := velocity - velocity.project(gravity_dir)
 
 		if wish_dir.length() > 0.01:
 			horiz_vel = wish_dir.normalized() * SWIM_SPEED
 		else:
 			horiz_vel = horiz_vel.lerp(Vector3.ZERO, 0.4)
 
-		velocity = vert_vel + horiz_vel
+		# Climbing out is deliberate, not automatic: the player must HOLD Space while
+		# LOOKING at a climbable ledge (a step within reach — see _can_step_out). Facing
+		# comes from the camera, so this only fires when you choose to climb a nearby
+		# step, never as a surprise auto-jump. While climbing we drive the player
+		# forward into the bank so the rise actually carries them up onto it.
+		var holding_up := Input.is_action_pressed("ui_accept")
+		var face_dir := _project_to_plane(-camera.global_basis.z, surface_normal)
+		var ledge_ahead := holding_up and face_dir != Vector3.ZERO and _can_step_out(face_dir, surface_normal)
 
-		if Input.is_action_just_pressed("ui_accept") and is_on_floor():
-			velocity += surface_normal * JUMP_VELOCITY
+		var v_up := velocity.dot(surface_normal)
+		var damp := clampf(WATER_VERTICAL_RATE * delta, 0.0, 1.0)
+		if ledge_ahead:
+			v_up = CLIMB_RISE_SPEED  # rise up the bank…
+			horiz_vel = face_dir * SWIM_SPEED  # …and move onto it
+			velocity = horiz_vel + surface_normal * v_up
+		elif not body_wet:
+			# Body is above the surface (e.g. just dropped out of fly over the ocean):
+			# apply real gravity so the player falls naturally into the water rather
+			# than drifting down at the slow in-water sink rate.
+			if not is_on_floor():
+				velocity += gravity_dir * GRAVITY_STRENGTH * delta
+			velocity = velocity.project(gravity_dir) + horiz_vel
+		elif holding_up:
+			if chest_wet:
+				v_up = lerp(v_up, SWIM_RISE_SPEED, damp)  # rise smoothly to the surface
+			else:
+				v_up = lerp(v_up, 0.0, damp)  # float at the surface — damped, no bob
+			velocity = horiz_vel + surface_normal * v_up
+		else:
+			v_up = maxf(v_up - SINK_ACCEL * delta, -SINK_MAX)  # sink by default
+			velocity = horiz_vel + surface_normal * v_up
 
 		move_and_slide()
 
@@ -202,6 +291,18 @@ func _physics_process(delta: float) -> void:
 		if Input.is_action_just_pressed("ui_accept") and is_on_floor():
 			velocity += surface_normal * JUMP_VELOCITY
 
+		# Mini-globe only: smoothly auto-step onto a one-block ledge directly ahead (no
+		# jump, no teleport). When a step is detected, ramp upward along the surface
+		# normal like the swim shore-climb (CLIMB_RISE_SPEED) and the horizontal slide
+		# carries the player onto it; once the feet clear the lip the probe stops firing
+		# and gravity settles them down. Not gated to is_on_floor so the rise continues
+		# across the airborne frames of the ascent (it self-terminates when no step is
+		# ahead). Replaces the old instant move_and_collide lift, which felt like a snap.
+		if on_mini and wish_dir.length() > 0.01:
+			var rise := _mini_step_rise(wish_dir.normalized(), surface_normal)
+			if rise > 0.0:
+				velocity = horiz_vel + surface_normal * MINI_STEP_RISE_SPEED
+
 		move_and_slide()
 		_swim_bob = 0.0
 
@@ -214,24 +315,39 @@ func _physics_process(delta: float) -> void:
 			Basis(Vector3.RIGHT, pitch_rad), Vector3(0.0, 1.6, 0.0) + bob_offset
 		)
 	else:
-		# TODO(bug): third-person aim is inconsistent — a downward mouse move can
-		# pitch the camera up OR down depending on the current yaw. The vertical
-		# rotation is built around the fixed world axis Vector3.RIGHT instead of the
-		# yaw-rotated surface-tangent right axis, so it doesn't track orientation the
-		# way first-person (which is correct) does. Fix: rotate about the actual
-		# surface-aligned right vector. Tracked in HANDOFF misc bugs.
-		var horiz := Basis(surface_normal, deg_to_rad(_yaw))
-		var vert := Basis(Vector3.RIGHT, pitch_rad)
-		var offset := horiz * (vert * Vector3(0.0, TP_HEIGHT, TP_DISTANCE))
-		camera.transform = Transform3D(Basis.IDENTITY, offset + bob_offset)
+		# Third-person: build the camera offset purely in the player's LOCAL frame,
+		# exactly like first-person does. The body's global_basis is already surface-
+		# aligned and yaw-rotated (set above), so the camera — its child — inherits the
+		# heading automatically. The old code re-applied yaw via Basis(surface_normal,
+		# _yaw) AND pitched about the world axis Vector3.RIGHT, mixing world and local
+		# frames; that made a downward mouse move read as up/down/left/right depending
+		# on the current heading. Here pitch is about the LOCAL right (x) axis and no
+		# yaw is re-applied, so aiming is consistent at every heading and latitude.
+		# Local +y is the surface normal, local +z is "behind" the player, so the base
+		# offset sits the camera up-and-back; pitch swings it around the player.
+		# Orient the third-person camera with the SAME local basis as first-person —
+		# pitch about the LOCAL right axis — rather than look_at(head). Two reasons:
+		# (1) look_at over-steepened the view: the camera looks from up-and-back AT the
+		# head, so its real view angle is steeper than _pitch and sailed PAST straight-
+		# down even though _pitch is clamped at -89, gimbal-flipping the roll. (2) Once
+		# the view passed vertical, cam_fwd (= -camera.global_basis.z projected to the
+		# ground, L154) flipped 180deg and reversed the walking direction. With the pitch
+		# basis the view can never exceed -89 (locks just shy of straight down, as the
+		# owner wants) and -camera.global_basis.z stays body_forward * cos(pitch) — same
+		# sign for all pitch in (-90, 90) — so movement never reverses. The body's
+		# global_basis already carries surface-align + yaw, so the child camera inherits
+		# heading; the offset (up + back, pitched the same way) sits it behind the player.
+		var pitch_basis := Basis(Vector3.RIGHT, pitch_rad)
+		var offset := pitch_basis * Vector3(0.0, TP_HEIGHT, TP_DISTANCE)
+		camera.transform = Transform3D(pitch_basis, offset + bob_offset)
 		# Camera collision ("spring arm"): if solid sits between the player's head
 		# and the desired 3rd-person camera spot, pull the camera in to the hit
 		# point so it doesn't clip through walls/ceilings into culled-solid space.
 		# The rock IS solid (same as Minecraft/Luanti) — we just slide the camera
 		# inward rather than letting it show the hollow. Skipped under _noclip so
 		# free hollow-space exploration isn't fought by the camera.
-		var head := global_position + global_basis.y * 1.0
 		if not _noclip:
+			var head := global_position + global_basis.y * 1.0
 			var desired := camera.global_position
 			var space := get_world_3d().direct_space_state
 			var q := PhysicsRayQueryParameters3D.create(head, desired)
@@ -239,7 +355,9 @@ func _physics_process(delta: float) -> void:
 			var chit := space.intersect_ray(q)
 			if not chit.is_empty():
 				camera.global_position = chit.position + (head - desired).normalized() * 0.2
-		camera.look_at(head, global_basis.y)
+
+	# Reticle follows the dig target (camera is now fully positioned above).
+	_update_reticle()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -281,8 +399,22 @@ func _unhandled_input(event: InputEvent) -> void:
 		_crosshair_enabled = not _crosshair_enabled
 		_refresh_crosshair()
 
+	if event is InputEventKey and event.keycode == KEY_G and event.pressed and not event.echo:
+		_toggle_inner_glass()
+
 
 var _water_visible := true
+var _inner_glass_visible := true
+
+
+# Toggle the inner Dyson-shell water glass off/on (KEY_G). Off = hidden AND
+# non-collidable, so you fall straight through the water instead of breaking blocks.
+func _toggle_inner_glass() -> void:
+	var iv := _inner_globe_voxels()
+	if iv == null or not iv.has_method("set_glass_enabled"):
+		return
+	_inner_glass_visible = not _inner_glass_visible
+	iv.set_glass_enabled(_inner_glass_visible)
 
 
 func _toggle_water() -> void:
@@ -298,17 +430,96 @@ func _toggle_water() -> void:
 const DIG_REACH := 10.0
 
 
-# Raycast from the camera and remove the voxel the player is aiming at.
-# Works on both the outer shell and inner shell at any depth.
+# Cast the dig ray and return the raw intersect_ray result ({} on a miss). Origin is
+# the EYE (not the camera) along the camera's forward axis, shared by the dig and the
+# reticle so the + always marks the block that will break. Eye-origin lets a
+# straight-down third-person aim reach the voxel directly underfoot — the camera, up
+# and back, can't see it. In first-person the eye and camera coincide, so this is the
+# same ray as before and aiming/digging are unchanged.
+func _aim_raycast() -> Dictionary:
+	if not planet:
+		return {}
+	var space := get_world_3d().direct_space_state
+	var eye := global_position + global_basis.y * EYE_HEIGHT
+	var aim := -camera.global_basis.z
+	var query := PhysicsRayQueryParameters3D.create(eye, eye + aim * DIG_REACH)
+	query.exclude = [get_rid()]
+	return space.intersect_ray(query)
+
+
+# Move the + to the screen point that marks where digging lands. On a miss (or a
+# target behind the camera) it falls back to screen centre. Skipped when hidden.
+func _update_reticle() -> void:
+	if not _crosshair or not _crosshair.visible:
+		return
+	var target = _reticle_target()
+	var screen := get_viewport().get_visible_rect().size * 0.5
+	if target != null and not camera.is_position_behind(target):
+		screen = camera.unproject_position(target)
+	_crosshair.position = screen - _crosshair.size * 0.5
+
+
+# Stable world point for the reticle: where the eye-ray crosses the surface SHELL
+# the player stands on (a sphere of the player's current radius), not the live
+# first-hit voxel. Using the analytic shell keeps the + put when a nearby block is
+# broken — the raycast's first hit would otherwise recede a voxel and, seen from the
+# up-and-back third-person camera, slide the + up the screen (parallax). At the
+# pristine surface this point coincides with the dig target. Inside the hollow (no
+# clean single sphere) or aiming past the dig reach it falls back to the live ray;
+# null means nothing to mark, so the caller centres the +.
+func _reticle_target():
+	if not planet:
+		return null
+	var eye := global_position + global_basis.y * EYE_HEIGHT
+	var aim := -camera.global_basis.z
+	var center := planet.global_position
+	var radius := (global_position - center).length()
+
+	# Inner mini-globe, third person: the magenta core sits at the centre of gravity, so
+	# the analytic shell (and the live hit) degenerate near it — the near/far roots flip
+	# and the + snaps. And because the TP camera is up-and-back, a close target parallax-
+	# swings fast as you pitch down (the "accelerating" aim). Marking a point at a FIXED
+	# distance along the eye-ray removes both: the + tracks the aim direction smoothly and
+	# uniformly, matching first person (where eye == camera, so there's no parallax). The
+	# dig itself still uses the live raycast, so digging is unaffected.
+	if not _first_person and radius < _planet_radius() * 0.5:
+		return eye + aim * RETICLE_TP_DIST
+
+	# Distance along the eye-ray to the point the + marks. Prefer the analytic shell
+	# (sphere of the player's current radius) on the outer surface — it's stable when a
+	# nearby block breaks. Otherwise the live raycast.
+	var t := -1.0
+	if radius > _planet_radius() * 0.9:
+		var oc := eye - center
+		var b := oc.dot(aim)
+		var c := oc.dot(oc) - radius * radius
+		var disc := b * b - c
+		if disc >= 0.0:
+			var sq := sqrt(disc)
+			var tt := -b - sq
+			if tt < 0.0:
+				tt = -b + sq
+			if tt >= 0.0 and tt <= DIG_REACH:
+				t = tt
+	if t < 0.0:
+		var hit := _aim_raycast()
+		if hit.is_empty():
+			return null
+		t = (Vector3(hit["position"]) - eye).length()
+
+	# Outer-surface third person: same parallax bound (clamp the distance to ~the camera-
+	# offset magnitude) so the downward-aim rate stays uniform.
+	if not _first_person:
+		t = maxf(t, RETICLE_TP_MIN_DIST)
+	return eye + aim * t
+
+
+# Raycast from the eye and remove the voxel the player is aiming at (the one the +
+# marks). Works on both the outer shell and inner shell at any depth.
 func _break_voxel_aimed() -> void:
 	if not planet:
 		return
-	var space := get_world_3d().direct_space_state
-	var cam_pos := camera.global_position
-	var cam_fwd := -camera.global_basis.z
-	var query := PhysicsRayQueryParameters3D.create(cam_pos, cam_pos + cam_fwd * DIG_REACH)
-	query.exclude = [get_rid()]
-	var hit := space.intersect_ray(query)
+	var hit := _aim_raycast()
 	if hit.is_empty():
 		return
 
@@ -318,6 +529,13 @@ func _break_voxel_aimed() -> void:
 	var rel: Vector3 = inside - planet.global_position
 	var r: float = rel.length()
 	var unit: Vector3 = rel.normalized()
+
+	# Inner mini-globe: a solid diggable voxel volume with its own dig routing. If the
+	# aim landed inside it, carve there and stop (don't fall through to the shell logic).
+	var iv := _inner_globe_voxels()
+	if iv and r <= iv.surface_radius():
+		iv.dig_at(hit.position, hit.normal)
+		return
 
 	var fr: Array = _CubeFaceScript.unit_to_face_col_row(unit, planet.resolution)
 	var face := int(fr[0])
@@ -348,6 +566,11 @@ func _break_voxel_aimed() -> void:
 # Chains to the inner face once the outer column is fully excavated.
 func _break_voxel_underfoot() -> void:
 	if not planet:
+		return
+	# Inner mini-globe: eat one crust layer straight down through the diggable volume.
+	var iv := _inner_globe_voxels()
+	if iv and global_position.length() < _planet_radius() * 0.5:
+		iv.dig_top((global_position - iv.global_position).normalized())
 		return
 	var result: Array = _CubeFaceScript.unit_to_face_col_row(
 		global_position.normalized(), planet.resolution
@@ -426,6 +649,80 @@ func _planet_radius() -> float:
 	return float(raw) if raw != null else 256.0
 
 
+# The inner-globe diggable voxel volume (InnerGlobeVoxels), looked up lazily via its
+# group and cached. Returns null until it's been added to the tree (during the build).
+func _inner_globe_voxels() -> Node:
+	if _inner_voxels == null or not is_instance_valid(_inner_voxels):
+		var nodes := get_tree().get_nodes_in_group("inner_globe_voxels")
+		_inner_voxels = nodes[0] if not nodes.is_empty() else null
+	return _inner_voxels
+
+
 func _project_to_plane(v: Vector3, normal: Vector3) -> Vector3:
 	var projected := v - v.dot(normal) * normal
 	return projected.normalized() if projected.length() > 0.001 else Vector3.ZERO
+
+
+# Aim the player's heading along the horizontal projection of `world_dir` (e.g. the
+# direction to the rising sun). The surface basis is rebuilt each physics frame from
+# _surface_right + _yaw; choosing _surface_right = fwd × n makes forward_dir
+# (= n × right) equal `fwd`, so with _yaw = 0 the camera looks straight along it.
+# Called once by World after the build so every run starts facing east into sunrise.
+func face_horizontal(world_dir: Vector3) -> void:
+	var origin: Vector3 = planet.global_position if planet else Vector3.ZERO
+	var n := (global_position - origin).normalized()
+	var fwd := world_dir - world_dir.dot(n) * n
+	if fwd.length() < 0.001:
+		return  # world_dir is straight up/down — no meaningful heading
+	fwd = fwd.normalized()
+	_surface_right = fwd.cross(n)
+	_yaw = 0.0
+
+
+# True when there's a climbable ledge in the player's look direction `fwd` (a unit
+# tangent). Probes the column a short way ahead by casting straight down and finding
+# its solid top; if that top sits within the climb window relative to the feet
+# ([STEP_MIN_DOWN, STEP_MAX_UP]) it's something we can haul out onto — a shore bank
+# or a shallow shelf a block or two under the surface. Over open water the only
+# solid ahead is the distant seafloor, far below the window, so this stays quiet.
+# Tall cliffs put their top above STEP_MAX_UP and are likewise left un-climbable.
+func _can_step_out(fwd: Vector3, surface_normal: Vector3) -> bool:
+	if not planet:
+		return false
+	var space := get_world_3d().direct_space_state
+	var ahead := global_position + fwd * STEP_REACH
+	var from := ahead + surface_normal * 2.5
+	var to := ahead - surface_normal * 3.0
+	var q := PhysicsRayQueryParameters3D.create(from, to)
+	q.exclude = [get_rid()]
+	var hit := space.intersect_ray(q)
+	if hit.is_empty():
+		return false
+	var rise: float = (Vector3(hit["position"]) - global_position).dot(surface_normal)
+	return rise >= STEP_MIN_DOWN and rise <= STEP_MAX_UP
+
+
+# Height of a climbable ONE-block step directly ahead in `wish_dir`, else 0. Used
+# only on the mini-globe to auto-step its blocky relief (see _physics_process).
+# Probes a short reach ahead, casts down to the solid top there, and returns the
+# rise if it sits within (0, MINI_STEP_MAX] above the feet — a single step to lift
+# onto. A taller wall (cliff) or open air ahead returns 0, so nothing auto-lifts.
+func _mini_step_rise(wish_dir: Vector3, surface_normal: Vector3) -> float:
+	if not planet:
+		return 0.0
+	# Anchor the probe at the FEET (global_position is the capsule centre, ~0.9 above
+	# the feet) so a low one-block step still falls inside the cast and reads positive.
+	var feet := global_position - surface_normal * CAPSULE_HALF_HEIGHT
+	var space := get_world_3d().direct_space_state
+	var ahead := feet + wish_dir * MINI_STEP_REACH
+	var from := ahead + surface_normal * (MINI_STEP_MAX + 0.2)
+	var to := ahead - surface_normal * 0.2
+	var q := PhysicsRayQueryParameters3D.create(from, to)
+	q.exclude = [get_rid()]
+	var hit := space.intersect_ray(q)
+	if hit.is_empty():
+		return 0.0
+	var rise: float = (Vector3(hit["position"]) - feet).dot(surface_normal)
+	if rise > 0.05 and rise <= MINI_STEP_MAX:
+		return rise
+	return 0.0

@@ -60,16 +60,20 @@ var _chunk_col_shapes := {}  # int key → CollisionShape3D, one per chunk
 # off to the inner shell (depth 0) so coastal pools drain into the subsurface;
 # otherwise it spreads sideways into same-level air. Never flows upward. Dig
 # events seed the frontier; a Timer drains it so water creeps in over time.
-const FLOW_HZ := 10.0  # settling ticks per second
-const FLOW_PER_TICK := 64  # max cells processed per tick (per face)
+const FLOW_HZ := 6.0  # settling ticks per second
+const FLOW_PER_TICK := 8  # max cells processed per tick (per face) — low so a dug
+# pocket fills with a visible creep instead of snapping full instantly
 var _flow_timer: Timer = null
 var _active_water := {}  # gk → [c, r, d]  (membership + payload)
 var _active_order: Array = []  # FIFO of gk for round-robin draining
 
 
 func _ready() -> void:
-	pass  # The build is driven externally by VoxelPlanet.build_planet_async() so
-	# the planet can assemble progressively across frames (loading screen).
+	# The build is driven externally by VoxelPlanet.build_planet_async() so the planet
+	# can assemble progressively across frames (loading screen). The only per-frame work
+	# this node does is flushing the amortized dig-collision queue (_physics_process),
+	# which idles disabled until a dig marks a chunk dirty (see _mark_collision_dirty).
+	set_physics_process(false)
 
 
 # --- Staged build API (driven by VoxelPlanet's orchestrator) ---------------
@@ -113,12 +117,15 @@ func has_chunk(cx: int, cy: int) -> bool:
 
 # Build one chunk's land + ocean mesh and its matching collision shape. No-op if
 # the chunk is unloaded. Called once per chunk by the orchestrator (batched).
+# The collision shape reuses the land render mesh's geometry (same triangles —
+# create_trimesh_shape ignores colour/uv/normals) instead of re-running the
+# per-voxel mesher a second time, which roughly halves the bulk-build mesh cost.
 func build_chunk(cx: int, cy: int) -> void:
 	var key := cx * chunks_per_edge + cy
 	if not _chunk_data.has(key):
 		return
-	_rebuild_chunk(cx, cy, key)
-	_build_chunk_collision(cx, cy)
+	var land_mesh := _rebuild_chunk(cx, cy, key)
+	_build_chunk_collision(cx, cy, land_mesh)
 
 
 # Approximate world-space centre of a chunk on this shell — used by the
@@ -394,13 +401,52 @@ func _build_chunk_collision_mesh(cx: int, cy: int) -> ArrayMesh:
 	return st.commit()
 
 
-func _build_chunk_collision(cx: int, cy: int) -> void:
+# --- Amortized dig-collision rebuilds --------------------------------------
+# Each dig has to rebuild the touched chunk's trimesh collider, which is a full
+# per-voxel collision re-mesh + create_trimesh_shape() — the expensive part of a
+# dig. The interactive dig paths used to queue one such rebuild per dig per chunk
+# with NO dedup (call_deferred), so holding the dig button stacked many identical
+# rebuilds in a frame and dropped the framerate until you stopped (the dip that
+# "recovers on stop"). Instead they now MARK the chunk dirty here; the flusher
+# rebuilds a bounded number per physics frame, deduped — so repeated digs into one
+# chunk collapse to a single rebuild and a burst spreads across frames. The render
+# mesh still updates instantly (visual feedback); only the collider lags a frame or
+# two, which the player physics tolerates fine. The bulk build + seam-edge pass
+# still call _build_chunk_collision directly (they must finish before play starts).
+var _col_dirty := {}  # int key (cx*CPE + cy) → true, chunks awaiting a collider rebuild
+const _COL_REBUILDS_PER_FRAME := 2
+
+
+func _mark_collision_dirty(cx: int, cy: int) -> void:
+	_col_dirty[cx * chunks_per_edge + cy] = true
+	set_physics_process(true)  # wake the flusher (it disables itself when drained)
+
+
+func _physics_process(_delta: float) -> void:
+	if _col_dirty.is_empty():
+		set_physics_process(false)
+		return
+	var done := 0
+	for key in _col_dirty.keys():  # keys() is a copy — safe to erase while iterating
+		if done >= _COL_REBUILDS_PER_FRAME:
+			break
+		_col_dirty.erase(key)
+		_build_chunk_collision(key / chunks_per_edge, key % chunks_per_edge)
+		done += 1
+	if _col_dirty.is_empty():
+		set_physics_process(false)
+
+
+# `reuse` lets the bulk build pass the already-built land render mesh so collision
+# doesn't re-mesh the chunk; the dig/seam paths mark the chunk dirty and this
+# rebuilds it fresh (reuse == null) from the amortized flusher.
+func _build_chunk_collision(cx: int, cy: int, reuse: Mesh = null) -> void:
 	var key := cx * chunks_per_edge + cy
 	var old := _chunk_col_shapes.get(key) as CollisionShape3D
 	if old != null and is_instance_valid(old):
 		old.queue_free()
 		_chunk_col_shapes.erase(key)
-	var mesh := _build_chunk_collision_mesh(cx, cy)
+	var mesh := reuse if reuse != null else _build_chunk_collision_mesh(cx, cy)
 	if mesh == null or mesh.get_surface_count() == 0:
 		return
 	var shape := mesh.create_trimesh_shape()
@@ -469,7 +515,9 @@ func _add_ocean_tops_to_surface(st: SurfaceTool, data: PackedByteArray, cx: int,
 				st.add_vertex(p01)
 
 
-func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
+# Returns the committed land render mesh so build_chunk can reuse it for collision
+# without re-meshing. Other callers (digs, water flow, seams) ignore the return.
+func _rebuild_chunk(cx: int, cy: int, key: int) -> Mesh:
 	# Retrieve UNTYPED (no `as` cast) — `as` on a freed object throws "Trying to
 	# cast a freed object". Always erase the dict entry after freeing: the water
 	# instance is only re-stored when the water mesh is non-empty, so a chunk
@@ -486,7 +534,7 @@ func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
 		old_water.queue_free()
 	_water_chunk_insts.erase(key)
 	if not _chunk_data.has(key):
-		return
+		return null
 	var chunk: PackedByteArray = _chunk_data[key] as PackedByteArray
 
 	var st: SurfaceTool = SurfaceTool.new()
@@ -510,6 +558,8 @@ func _rebuild_chunk(cx: int, cy: int, key: int) -> void:
 		water_inst.material_override = _water_mat
 		add_child(water_inst)
 		_water_chunk_insts[key] = water_inst
+
+	return inst.mesh
 
 
 func set_water_visible(v: bool) -> void:
@@ -769,7 +819,7 @@ func _rebuild_seam_neighbors(col: int, row: int) -> void:
 		var nkey: int = ncx * nb.chunks_per_edge + ncy
 		if nb._chunk_data.has(nkey):
 			nb._rebuild_chunk(ncx, ncy, nkey)
-			nb._build_chunk_collision.call_deferred(ncx, ncy)
+			nb._mark_collision_dirty(ncx, ncy)
 
 
 # Remove a specific voxel by column + depth. Used by aimed digging.
@@ -790,7 +840,7 @@ func remove_voxel(col: int, row: int, depth: int) -> bool:
 	# Seed water settling: adjacent ocean/water creeps into the new air over the
 	# next ticks (gravity flow), instead of snap-filling on the dig.
 	_seed_flow_around(col, row, depth)
-	_build_chunk_collision.call_deferred(cx, cy)
+	_mark_collision_dirty(cx, cy)
 	_rebuild_chunk(cx, cy, key)
 	for nb in [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]:
 		var nx: int = nb[0]
@@ -840,7 +890,7 @@ func remove_top_voxel(col: int, row: int) -> bool:
 	# Per-voxel mesher reads occupancy directly, so there is no grid to update;
 	# just rebuild this chunk's mesh + collision and refresh the four neighbours
 	# (removing a voxel can expose their previously-hidden side faces).
-	_build_chunk_collision.call_deferred(cx, cy)
+	_mark_collision_dirty(cx, cy)
 	_rebuild_chunk(cx, cy, key)
 	for nb in [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]:
 		var nx: int = nb[0]
