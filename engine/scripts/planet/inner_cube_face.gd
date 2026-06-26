@@ -64,8 +64,10 @@ var _active_order: Array = []  # FIFO of gk for round-robin draining
 
 
 func _ready() -> void:
-	pass  # The build is driven externally by VoxelPlanet.build_planet_async() so
-	# the planet can assemble progressively across frames (loading screen).
+	# Build driven externally by VoxelPlanet.build_planet_async(). The only per-frame
+	# work is flushing the amortized dig-collision queue (_physics_process), idle until
+	# a dig marks a chunk dirty (see _mark_collision_dirty).
+	set_physics_process(false)
 
 
 # --- Staged build API (driven by VoxelPlanet's orchestrator) ---------------
@@ -496,8 +498,40 @@ func _build_chunk_collision_mesh(cx: int, cy: int) -> ArrayMesh:
 	return st.commit()
 
 
+# --- Amortized dig-collision rebuilds --------------------------------------
+# Mirror of CubeFace's amortizer: interactive digs MARK the touched chunk dirty
+# rather than queuing an immediate full collider rebuild (per-voxel collision
+# re-mesh + create_trimesh_shape), so repeated digs into one chunk collapse to a
+# single rebuild and a burst spreads across frames. Render mesh updates instantly;
+# only the collider lags a frame or two. The bulk build + seam pass still rebuild
+# collision directly (they must complete before play begins).
+var _col_dirty := {}  # int key (cx*CPE + cy) → true, chunks awaiting a collider rebuild
+const _COL_REBUILDS_PER_FRAME := 2
+
+
+func _mark_collision_dirty(cx: int, cy: int) -> void:
+	_col_dirty[cx * chunks_per_edge + cy] = true
+	set_physics_process(true)  # wake the flusher (it disables itself when drained)
+
+
+func _physics_process(_delta: float) -> void:
+	if _col_dirty.is_empty():
+		set_physics_process(false)
+		return
+	var done := 0
+	for key in _col_dirty.keys():  # keys() is a copy — safe to erase while iterating
+		if done >= _COL_REBUILDS_PER_FRAME:
+			break
+		_col_dirty.erase(key)
+		_build_chunk_collision(key / chunks_per_edge, key % chunks_per_edge)
+		done += 1
+	if _col_dirty.is_empty():
+		set_physics_process(false)
+
+
 # `reuse` lets the bulk build pass the already-built land render mesh so collision
-# doesn't re-mesh the chunk; the dig/seam paths call this deferred with no mesh.
+# doesn't re-mesh the chunk; the dig/seam paths mark the chunk dirty and this
+# rebuilds it fresh (reuse == null) from the amortized flusher.
 func _build_chunk_collision(cx: int, cy: int, reuse: Mesh = null) -> void:
 	var key := cx * chunks_per_edge + cy
 	var old := _chunk_col_shapes.get(key) as CollisionShape3D
@@ -719,7 +753,7 @@ func _rebuild_seam_neighbors(col: int, row: int) -> void:
 		var nkey: int = ncx * nb.chunks_per_edge + ncy
 		if nb._chunk_data.has(nkey):
 			nb._rebuild_chunk(ncx, ncy, nkey)
-			nb._build_chunk_collision.call_deferred(ncx, ncy)
+			nb._mark_collision_dirty(ncx, ncy)
 
 
 # Re-mesh every chunk the flood fill wrote water into. The BFS can propagate
@@ -766,7 +800,7 @@ func remove_voxel(col: int, row: int, depth: int) -> bool:
 	if not has_solid:
 		open_column(col, row)
 		return true
-	_build_chunk_collision.call_deferred(cx, cy)
+	_mark_collision_dirty(cx, cy)
 	if not rebuilt.has(key):
 		_rebuild_chunk(cx, cy, key)
 		rebuilt[key] = true
@@ -787,7 +821,7 @@ func open_column(col: int, row: int) -> void:
 	var cx := col / CHUNK_SIZE
 	var cy := row / CHUNK_SIZE
 	_opened_columns[col * _face_res + row] = true
-	_build_chunk_collision.call_deferred(cx, cy)
+	_mark_collision_dirty(cx, cy)
 	_rebuild_chunk(cx, cy, cx * chunks_per_edge + cy)
 	for nb in [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]:
 		var nx: int = nb[0]
@@ -853,7 +887,7 @@ func remove_top_voxel(col: int, row: int) -> bool:
 	_top_depth_grid[gi] = new_floor
 	_top_mat_grid[gi] = new_mat
 
-	_build_chunk_collision.call_deferred(cx, cy)
+	_mark_collision_dirty(cx, cy)
 	if not rebuilt.has(key):
 		_rebuild_chunk(cx, cy, key)
 		rebuilt[key] = true

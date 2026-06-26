@@ -19,6 +19,12 @@ var _spawn_page: VBoxContainer
 func _ready() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	_build_ui()
+	# Start the music playlist here so the menu plays music from the very first screen
+	# (idempotent: the Music autoload persists across the scene change, so it keeps
+	# cycling seamlessly through loading and into the world).
+	var music := get_node_or_null("/root/Music")
+	if music:
+		music.start()
 
 
 func _build_ui() -> void:

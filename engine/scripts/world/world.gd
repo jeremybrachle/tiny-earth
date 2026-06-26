@@ -13,6 +13,7 @@ var _sky_mat: ShaderMaterial = null
 var _loading_layer: CanvasLayer = null
 var _loading_bar: ProgressBar = null
 var _loading_label: Label = null
+var _loading_track_label: Label = null  # "now playing" text on the loading-screen music row
 var _phase_label: String = ""
 
 # While the planet assembles we watch it from a FIXED camera out in space aimed
@@ -22,7 +23,15 @@ var _phase_label: String = ""
 # is paused so the lighting stays stable. A static view means a low build-time
 # framerate just reads as a slideshow, with no input lag to feel.
 var _building: bool = false
+# True once the progressive build has finished and gameplay started. Gates the
+# per-frame realtime sky (twinkle) so it only turns on after loading — the early
+# _apply_graphics_quality() call in _ready (before _start_build flips _building)
+# must NOT switch the sky to REALTIME mid-load.
+var _built: bool = false
 var _obs_cam: Camera3D = null
+# Spawn position (from the menu pick, read off the Player) — chosen in _enter_loading_view
+# and reused by _start_build to drive the build/reveal order and the observation camera.
+var _spawn_pos: Vector3 = Vector3.ZERO
 # Load-time profiling (queue item 1, "measure first"): wall-clock for the whole build
 # and the inner-globe sub-build, printed alongside the per-phase CPU timing.
 var _build_start_ms: int = 0
@@ -53,7 +62,31 @@ func _ready() -> void:
 	_setup_sky()
 	_setup_environment()
 	_setup_sun()
+	_apply_graphics_quality()  # gate the expensive post-FX by the saved High/Low preset
+
+	# Paint the loading overlay FIRST, before the heavy synchronous planet-generator
+	# setup. _setup_planet_generator() → generate_planet() blocks for a noticeable
+	# beat, and it used to run before any overlay existed — so the previous
+	# (level-select) frame stayed frozen on screen the whole time. Building the
+	# overlay and yielding two frames here lets the bar actually render at 0% before
+	# we hit that stall, so the transition reads as "loading" instead of a hang.
+	_building = true
+	_build_start_ms = Time.get_ticks_msec()
+	_build_loading_overlay()
+	_on_build_phase("Preparing planet")
+	# Switch to the space view (hide the player capsule, make the observation camera
+	# current) BEFORE the awaits + the synchronous generator stall. Otherwise the
+	# player's own camera stays active for those 1–2s and you see the capsule floating
+	# in an empty starfield until _start_build finally hid it.
+	_enter_loading_view()
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	# Measure the deferred setup cost (queue item 1a "measure the gap first"): this
+	# is the synchronous stall that previously preceded the first painted frame.
+	var setup_s := Time.get_ticks_msec()
 	_setup_planet_generator()
+	print("[load] generator setup=%dms" % (Time.get_ticks_msec() - setup_s))
 	_start_build()
 
 
@@ -70,6 +103,19 @@ func _notification(what: int) -> void:
 	var planet := get_node_or_null("VoxelPlanet")
 	if planet:
 		planet.free()
+	# Closing DURING the loading screen leaked ObjectDB instances: the build coroutine
+	# is parked on an await and these build-time-only nodes never got torn down. Free
+	# them here too so a mid-load close releases in tree order instead of at exit.
+	# (Harmless post-build — they're already freed/null by then; the guards no-op.)
+	if _obs_cam and is_instance_valid(_obs_cam):
+		_obs_cam.free()
+		_obs_cam = null
+	if _loading_layer and is_instance_valid(_loading_layer):
+		_loading_layer.free()
+		_loading_layer = null
+	var gen := get_node_or_null("PlanetGenerator")
+	if gen:
+		gen.free()
 	get_tree().quit()
 
 
@@ -106,6 +152,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_T:
 		_time_scale_idx = (_time_scale_idx + 1) % _TIME_SCALES.size()
 		print("Day/night time scale: %.0f×" % _TIME_SCALES[_time_scale_idx])
+	# Music track skip: [ = previous, ] = next (cycles the playlist; see Music autoload).
+	if event is InputEventKey and event.pressed and not event.echo:
+		var music := get_node_or_null("/root/Music")
+		if music:
+			if event.keycode == KEY_BRACKETRIGHT:
+				music.next()
+			elif event.keycode == KEY_BRACKETLEFT:
+				music.prev()
 
 
 func _setup_sky() -> void:
@@ -210,6 +264,55 @@ func _setup_sun() -> void:
 		_sky_mat.set_shader_parameter("star_twinkle_enable", 0.0)
 
 
+# --- Graphics quality preset ----------------------------------------------
+# Gate the expensive renderer features by the player's High/Low choice (persisted
+# in GameSettings, tuned from the pause Settings → Graphics page). High = the full
+# look; Low drops the screen-space passes (SSIL/SSAO) and the per-frame sky re-render
+# and lightens shadows, which is the big GPU/heat saver on weak machines and the path
+# toward the Mobile renderer. The non-gated env params (tonemap, ambient, SSAO/SSIL
+# radii, glow) stay as set in _setup_environment; this only flips the heavy switches.
+func _apply_graphics_quality() -> void:
+	var low := _is_low_quality()
+	var env := _world_env.environment
+
+	# SSIL is the priciest screen-space effect for the subtlest gain → first to go.
+	# SSAO is moderate; also off on Low. Glow stays on both (cheap, part of the sun look).
+	env.ssil_enabled = not low
+	env.ssao_enabled = not low
+
+	# Shadows: fewer splits + shorter distance on Low (cheaper cascade render).
+	_sun.directional_shadow_mode = (
+		DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if low
+		else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	)
+	_sun.directional_shadow_max_distance = 300.0 if low else 600.0
+
+	# Realtime sky (star twinkle) is a full-screen pass every frame. Only run it on
+	# High, and only once gameplay starts — during the build the sky is kept
+	# INCREMENTAL regardless (the loading framerate can't spare a per-frame re-render).
+	var sky: Sky = env.sky
+	if sky and _built:
+		sky.process_mode = (
+			Sky.PROCESS_MODE_INCREMENTAL if low else Sky.PROCESS_MODE_REALTIME
+		)
+
+
+func _is_low_quality() -> bool:
+	var gs := get_node_or_null("/root/GameSettings")
+	if gs and gs.has_method("get_quality"):
+		return str(gs.get_quality()) == GameSettings.QUALITY_LOW
+	return false
+
+
+# Live toggle from the pause Settings → Graphics page. Persists the choice and
+# re-applies it to the running WorldEnvironment/sun immediately.
+func set_graphics_quality(q: String) -> void:
+	var gs := get_node_or_null("/root/GameSettings")
+	if gs and gs.has_method("set_quality"):
+		gs.set_quality(q)
+	_apply_graphics_quality()
+
+
 # --- Progressive build + loading overlay -----------------------------------
 # The faces no longer build in their own _ready(); VoxelPlanet.build_planet_async
 # spreads the meshing across frames and reports progress. We show a loading
@@ -219,40 +322,15 @@ func _start_build() -> void:
 	if planet == null:
 		push_warning("World: VoxelPlanet missing — cannot run progressive build")
 		return
-	_building = true
-	_build_start_ms = Time.get_ticks_msec()
-	_build_loading_overlay()
-
-	var planet_r: float = float(planet.get("planet_radius"))
-	var player := get_node_or_null("Player") as Node3D
-	# Spawn-out reveal order keys off the player's spawn position (the location
-	# chosen on the menu — see SpawnPoints / player.gd _ready()).
-	var spawn_pos: Vector3 = player.global_position if player else Vector3(0.0, planet_r, 0.0)
-	# Start every run at dawn wherever the player spawns: put the subsolar point a
-	# quarter-turn (90°) east of the spawn longitude so the sun begins on the horizon,
-	# plus a small extra trail (_DAWN_DEPRESSION_DEG) so it starts JUST BELOW the
-	# eastern horizon and visibly rises as the day/night cycle advances. The spawn's
-	# longitude angle in the X-Z plane is atan2(z, x); the sun is overhead at
-	# +sun_dir, so we trail it 90° + the depression.
-	_sun_angle = atan2(spawn_pos.z, spawn_pos.x) - PI / 2.0 - deg_to_rad(_DAWN_DEPRESSION_DEG)
-	if player:
-		player.set_physics_process(false)  # no surface yet; also keeps frames free
-		player.set_process_unhandled_input(false)  # don't let a stray click capture the mouse
-		player.visible = false  # hide the capsule; we watch from space
-
-	_setup_observation_camera(spawn_pos, planet_r)
-
-	# Light the assembling globe from the observation-camera side so it reads in 3D
-	# during the loading screen instead of flat ambient. The camera sits along
-	# +spawn_pos (see _setup_observation_camera), so putting the subsolar point near
-	# that direction lights the hemisphere we're watching; a small upward tilt leaves
-	# a soft terminator near the bottom edge rather than dead-flat front lighting.
-	# This is build-time only — _on_build_finished re-points the sun via
-	# _apply_sun_direction() to the gameplay dawn angle. The sky disc stays gated off
-	# (sun_visible uniform = 0, set in _setup_sun) so no bright sun returns here.
-	var build_light_dir := (spawn_pos.normalized() + Vector3.UP * 0.35).normalized()
-	var build_up_ref := Vector3.UP if abs(build_light_dir.dot(Vector3.UP)) < 0.99 else Vector3.FORWARD
-	_sun.look_at_from_position(Vector3.ZERO, -build_light_dir, build_up_ref)
+	# _building, _build_start_ms, the loading overlay and the space view are established
+	# in _ready() (before the heavy generator setup) so the bar paints and the player
+	# capsule is hidden immediately; guard in case _start_build is reached without that
+	# prelude.
+	if _loading_layer == null:
+		_building = true
+		_build_start_ms = Time.get_ticks_msec()
+		_build_loading_overlay()
+		_enter_loading_view()
 
 	planet.build_phase.connect(_on_build_phase)
 	planet.build_progress.connect(_on_build_progress)
@@ -274,7 +352,44 @@ func _start_build() -> void:
 		await gen.build_inner_voxels()
 		print("[load] inner-globe build wall=%dms" % (Time.get_ticks_msec() - inner_s))
 
-	planet.build_planet_async(spawn_pos)
+	planet.build_planet_async(_spawn_pos)
+
+
+# Enter the loading "watch from space" view: hide the player capsule, freeze its
+# physics/input, switch to a fixed observation camera, and orient the build light.
+# Done as early as possible (in _ready, before the synchronous generator setup) so the
+# very first painted frame shows the space view rather than the player capsule floating
+# in an empty starfield while the heavy setup blocks.
+func _enter_loading_view() -> void:
+	var planet := get_node_or_null("VoxelPlanet")
+	var planet_r: float = float(planet.get("planet_radius")) if planet else 256.0
+	var player := get_node_or_null("Player") as Node3D
+	# Spawn-out reveal order keys off the player's spawn position (the location chosen
+	# on the menu — see SpawnPoints / player.gd _ready()).
+	_spawn_pos = player.global_position if player else Vector3(0.0, planet_r, 0.0)
+	# Start every run at dawn wherever the player spawns: put the subsolar point a
+	# quarter-turn (90°) east of the spawn longitude so the sun begins on the horizon,
+	# plus a small extra trail (_DAWN_DEPRESSION_DEG) so it starts JUST BELOW the eastern
+	# horizon and visibly rises. The spawn's longitude angle in the X-Z plane is
+	# atan2(z, x); the sun is overhead at +sun_dir, so we trail it 90° + the depression.
+	_sun_angle = atan2(_spawn_pos.z, _spawn_pos.x) - PI / 2.0 - deg_to_rad(_DAWN_DEPRESSION_DEG)
+	if player:
+		player.set_physics_process(false)  # no surface yet; also keeps frames free
+		player.set_process_unhandled_input(false)  # don't let a stray click capture the mouse
+		player.visible = false  # hide the capsule; we watch from space
+
+	_setup_observation_camera(_spawn_pos, planet_r)
+
+	# Light the assembling globe from the observation-camera side so it reads in 3D
+	# during the loading screen instead of flat ambient. The camera sits along
+	# +spawn_pos (see _setup_observation_camera), so putting the subsolar point near
+	# that direction lights the hemisphere we're watching; a small upward tilt leaves a
+	# soft terminator near the bottom edge rather than dead-flat front lighting. This is
+	# build-time only — _on_build_finished re-points the sun via _apply_sun_direction().
+	# The sky disc stays gated off (sun_visible uniform = 0, set in _setup_sun).
+	var build_light_dir := (_spawn_pos.normalized() + Vector3.UP * 0.35).normalized()
+	var build_up_ref := Vector3.UP if abs(build_light_dir.dot(Vector3.UP)) < 0.99 else Vector3.FORWARD
+	_sun.look_at_from_position(Vector3.ZERO, -build_light_dir, build_up_ref)
 
 
 # A fixed camera out in space aimed at the planet centre from the spawn
@@ -322,7 +437,7 @@ func _build_loading_overlay() -> void:
 	box.anchor_right = 0.5
 	box.offset_left = -220.0
 	box.offset_right = 220.0
-	box.offset_top = -120.0
+	box.offset_top = -168.0  # extra room for the music-control row below the bar
 	box.offset_bottom = -48.0
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	box.add_theme_constant_override("separation", 10)
@@ -350,6 +465,57 @@ func _build_loading_overlay() -> void:
 	_loading_bar.value = 0.0
 	_loading_bar.show_percentage = false
 	box.add_child(_loading_bar)
+
+	_build_loading_music_row(box)
+
+
+# A small music player on the loading screen (‹  ♪ track  ›) so the player can change
+# the track while the planet builds. The keyboard [ / ] shortcuts also work here (see
+# _unhandled_input); these are the on-screen equivalent.
+func _build_loading_music_row(box: VBoxContainer) -> void:
+	var music := get_node_or_null("/root/Music")
+	if music == null:
+		return
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 10)
+	box.add_child(row)
+
+	var prev_btn := Button.new()
+	prev_btn.text = "‹"
+	prev_btn.focus_mode = Control.FOCUS_NONE
+	prev_btn.custom_minimum_size = Vector2(40, 28)
+	prev_btn.pressed.connect(func(): music.prev())
+	row.add_child(prev_btn)
+
+	_loading_track_label = Label.new()
+	_loading_track_label.text = "♪"
+	_loading_track_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_loading_track_label.custom_minimum_size = Vector2(280, 0)
+	_loading_track_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	_loading_track_label.add_theme_constant_override("outline_size", 4)
+	row.add_child(_loading_track_label)
+
+	var next_btn := Button.new()
+	next_btn.text = "›"
+	next_btn.focus_mode = Control.FOCUS_NONE
+	next_btn.custom_minimum_size = Vector2(40, 28)
+	next_btn.pressed.connect(func(): music.next())
+	row.add_child(next_btn)
+
+	# Reflect the current track and follow any change (buttons, keys, auto-advance).
+	if music.has_method("get_track_titles") and music.has_method("get_current_index"):
+		var titles: Array = music.get_track_titles()
+		var ci: int = music.get_current_index()
+		if ci >= 0 and ci < titles.size():
+			_loading_track_label.text = "♪ %s" % titles[ci]
+	if music.has_signal("track_changed"):
+		music.track_changed.connect(_on_loading_track_changed)
+
+
+func _on_loading_track_changed(_index: int, title: String) -> void:
+	if _loading_track_label and is_instance_valid(_loading_track_label):
+		_loading_track_label.text = "♪ %s" % title
 
 
 func _on_build_phase(label: String) -> void:
@@ -381,6 +547,7 @@ func _set_loading_frac(frac: float) -> void:
 
 func _on_build_finished() -> void:
 	_building = false
+	_built = true  # gameplay started — _apply_graphics_quality may now enable realtime sky
 	print("[load] total build wall=%dms" % (Time.get_ticks_msec() - _build_start_ms))
 	# Hide the loading-screen smooth inner globe now that play begins, revealing the
 	# diggable hollow voxel shell it was enclosing (kept hidden behind it during loading).
@@ -394,11 +561,11 @@ func _on_build_finished() -> void:
 	if _sky_mat:
 		_sky_mat.set_shader_parameter("sun_visible", 1.0)
 		_sky_mat.set_shader_parameter("star_twinkle_enable", 1.0)  # twinkle on in-game
-	# Now that the heavy build is done, re-render the sky every frame so the twinkle
-	# animates (kept INCREMENTAL during the build to spare the loading framerate).
-	var sky := _world_env.environment.sky
-	if sky:
-		sky.process_mode = Sky.PROCESS_MODE_REALTIME
+	# Now that the heavy build is done, apply the graphics preset for gameplay: on
+	# High this re-renders the sky every frame so the twinkle animates (kept
+	# INCREMENTAL during the build to spare the loading framerate); on Low it stays
+	# incremental. _built was just set true above, so the sky branch runs now.
+	_apply_graphics_quality()
 	_apply_sun_direction()
 	var player := get_node_or_null("Player") as Node3D
 	if player:
@@ -426,6 +593,10 @@ func _on_build_finished() -> void:
 		_obs_cam.queue_free()
 		_obs_cam = null
 	if _loading_layer:
+		var music := get_node_or_null("/root/Music")
+		if music and music.has_signal("track_changed") and music.track_changed.is_connected(_on_loading_track_changed):
+			music.track_changed.disconnect(_on_loading_track_changed)
+		_loading_track_label = null
 		_loading_layer.queue_free()
 		_loading_layer = null
 

@@ -36,6 +36,10 @@ var _water_mats: Array = []  # unique water ShaderMaterials, collected on open
 var _water_sliders := {}  # param name -> HSlider
 var _water_value_labels := {}  # param name -> Label
 
+# Audio page: the track picker, kept in sync with the Music autoload (which also
+# changes track on auto-advance and the in-game [ / ] keys).
+var _track_opt: OptionButton = null
+
 
 func _ready() -> void:
 	layer = 60
@@ -185,6 +189,45 @@ func _build_audio_page() -> void:
 	music_slider.value_changed.connect(_on_music_volume_changed)
 	box.add_child(music_slider)
 
+	# Track picker: pick any track from the playlist; prev/next step through it. The
+	# dropdown stays synced via Music.track_changed (auto-advance + the in-game keys).
+	_add_spacer(box, 12)
+	var track_label := Label.new()
+	track_label.text = "Track"
+	track_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(track_label)
+
+	_track_opt = OptionButton.new()
+	_track_opt.custom_minimum_size = Vector2(0, 32)
+	if music and music.has_method("get_track_titles"):
+		var titles: Array = music.get_track_titles()
+		for i in titles.size():
+			_track_opt.add_item(str(titles[i]), i)
+		_track_opt.selected = music.get_current_index()
+		_track_opt.item_selected.connect(_on_track_selected)
+		if music.has_signal("track_changed"):
+			music.track_changed.connect(_on_music_track_changed)
+	box.add_child(_track_opt)
+
+	var nav_row := HBoxContainer.new()
+	nav_row.add_theme_constant_override("separation", 8)
+	nav_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(nav_row)
+	var prev_btn := _make_button("‹ Prev", _on_track_prev)
+	prev_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nav_row.add_child(prev_btn)
+	var next_btn := _make_button("Next ›", _on_track_next)
+	next_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nav_row.add_child(next_btn)
+
+	# Shuffle: randomize the rotation (auto-advance + Next pick a random track).
+	var shuffle_chk := CheckBox.new()
+	shuffle_chk.text = "Shuffle"
+	if music and music.has_method("get_shuffle"):
+		shuffle_chk.button_pressed = music.get_shuffle()
+		shuffle_chk.toggled.connect(_on_shuffle_toggled)
+	box.add_child(shuffle_chk)
+
 	_add_spacer(box, 16)
 	box.add_child(_make_button("Back", func(): _show("settings")))
 
@@ -193,6 +236,28 @@ func _build_graphics_page() -> void:
 	var box := _make_page("graphics")
 	_add_title(box, "Graphics", 40)
 	_add_spacer(box, 6)
+
+	# Quality preset: High = full post-FX (SSIL/SSAO/glow/realtime sky/4-split shadows);
+	# Low drops the heavy screen-space passes to run cooler on weak GPUs. Applied live
+	# (and persisted) via World.set_graphics_quality().
+	var quality_row := HBoxContainer.new()
+	quality_row.add_theme_constant_override("separation", 8)
+	box.add_child(quality_row)
+
+	var quality_lbl := Label.new()
+	quality_lbl.text = "Quality"
+	quality_lbl.custom_minimum_size = Vector2(100, 0)
+	quality_row.add_child(quality_lbl)
+
+	var quality_opt := OptionButton.new()
+	quality_opt.add_item("High", 0)
+	quality_opt.add_item("Low", 1)
+	quality_opt.selected = 1 if GameSettings.get_quality() == GameSettings.QUALITY_LOW else 0
+	quality_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	quality_opt.item_selected.connect(_on_quality_selected)
+	quality_row.add_child(quality_opt)
+
+	_add_spacer(box, 10)
 
 	var water_label := Label.new()
 	water_label.text = "Water Appearance"
@@ -258,6 +323,14 @@ func _apply_water(pname: String, value: float) -> void:
 	GameSettings.set_water(pname, value)  # persist to user://settings.cfg
 
 
+func _on_quality_selected(idx: int) -> void:
+	var q: String = GameSettings.QUALITY_LOW if idx == 1 else GameSettings.QUALITY_HIGH
+	# PauseMenu is a child of World (World adds it post-build); reach up to apply live.
+	var world := get_parent()
+	if world and world.has_method("set_graphics_quality"):
+		world.set_graphics_quality(q)
+
+
 func _set_water_value_label(pname: String, value: float) -> void:
 	_water_value_labels[pname].text = "%.2f" % value
 
@@ -290,6 +363,38 @@ func _on_music_volume_changed(v: float) -> void:
 	var music := get_node_or_null("/root/Music")
 	if music:
 		music.set_volume_linear(v)
+
+
+func _on_track_selected(idx: int) -> void:
+	var music := get_node_or_null("/root/Music")
+	if music:
+		music.play_index(idx)
+
+
+func _on_track_prev() -> void:
+	var music := get_node_or_null("/root/Music")
+	if music:
+		music.prev()
+
+
+func _on_track_next() -> void:
+	var music := get_node_or_null("/root/Music")
+	if music:
+		music.next()
+
+
+func _on_shuffle_toggled(on: bool) -> void:
+	var music := get_node_or_null("/root/Music")
+	if music:
+		music.set_shuffle(on)
+
+
+# Keep the dropdown's selection in sync when the track changes from elsewhere
+# (auto-advance at a track's end, or the in-game [ / ] keys). set_value_no_signal
+# equivalent for OptionButton: setting `selected` directly doesn't emit item_selected.
+func _on_music_track_changed(index: int, _title: String) -> void:
+	if _track_opt and index >= 0 and index < _track_opt.item_count:
+		_track_opt.selected = index
 
 
 func _on_quit_to_menu() -> void:

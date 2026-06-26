@@ -69,8 +69,11 @@ var _active_order: Array = []  # FIFO of gk for round-robin draining
 
 
 func _ready() -> void:
-	pass  # The build is driven externally by VoxelPlanet.build_planet_async() so
-	# the planet can assemble progressively across frames (loading screen).
+	# The build is driven externally by VoxelPlanet.build_planet_async() so the planet
+	# can assemble progressively across frames (loading screen). The only per-frame work
+	# this node does is flushing the amortized dig-collision queue (_physics_process),
+	# which idles disabled until a dig marks a chunk dirty (see _mark_collision_dirty).
+	set_physics_process(false)
 
 
 # --- Staged build API (driven by VoxelPlanet's orchestrator) ---------------
@@ -398,9 +401,45 @@ func _build_chunk_collision_mesh(cx: int, cy: int) -> ArrayMesh:
 	return st.commit()
 
 
+# --- Amortized dig-collision rebuilds --------------------------------------
+# Each dig has to rebuild the touched chunk's trimesh collider, which is a full
+# per-voxel collision re-mesh + create_trimesh_shape() — the expensive part of a
+# dig. The interactive dig paths used to queue one such rebuild per dig per chunk
+# with NO dedup (call_deferred), so holding the dig button stacked many identical
+# rebuilds in a frame and dropped the framerate until you stopped (the dip that
+# "recovers on stop"). Instead they now MARK the chunk dirty here; the flusher
+# rebuilds a bounded number per physics frame, deduped — so repeated digs into one
+# chunk collapse to a single rebuild and a burst spreads across frames. The render
+# mesh still updates instantly (visual feedback); only the collider lags a frame or
+# two, which the player physics tolerates fine. The bulk build + seam-edge pass
+# still call _build_chunk_collision directly (they must finish before play starts).
+var _col_dirty := {}  # int key (cx*CPE + cy) → true, chunks awaiting a collider rebuild
+const _COL_REBUILDS_PER_FRAME := 2
+
+
+func _mark_collision_dirty(cx: int, cy: int) -> void:
+	_col_dirty[cx * chunks_per_edge + cy] = true
+	set_physics_process(true)  # wake the flusher (it disables itself when drained)
+
+
+func _physics_process(_delta: float) -> void:
+	if _col_dirty.is_empty():
+		set_physics_process(false)
+		return
+	var done := 0
+	for key in _col_dirty.keys():  # keys() is a copy — safe to erase while iterating
+		if done >= _COL_REBUILDS_PER_FRAME:
+			break
+		_col_dirty.erase(key)
+		_build_chunk_collision(key / chunks_per_edge, key % chunks_per_edge)
+		done += 1
+	if _col_dirty.is_empty():
+		set_physics_process(false)
+
+
 # `reuse` lets the bulk build pass the already-built land render mesh so collision
-# doesn't re-mesh the chunk; the dig/seam paths call this deferred with no mesh and
-# rebuild it fresh.
+# doesn't re-mesh the chunk; the dig/seam paths mark the chunk dirty and this
+# rebuilds it fresh (reuse == null) from the amortized flusher.
 func _build_chunk_collision(cx: int, cy: int, reuse: Mesh = null) -> void:
 	var key := cx * chunks_per_edge + cy
 	var old := _chunk_col_shapes.get(key) as CollisionShape3D
@@ -780,7 +819,7 @@ func _rebuild_seam_neighbors(col: int, row: int) -> void:
 		var nkey: int = ncx * nb.chunks_per_edge + ncy
 		if nb._chunk_data.has(nkey):
 			nb._rebuild_chunk(ncx, ncy, nkey)
-			nb._build_chunk_collision.call_deferred(ncx, ncy)
+			nb._mark_collision_dirty(ncx, ncy)
 
 
 # Remove a specific voxel by column + depth. Used by aimed digging.
@@ -801,7 +840,7 @@ func remove_voxel(col: int, row: int, depth: int) -> bool:
 	# Seed water settling: adjacent ocean/water creeps into the new air over the
 	# next ticks (gravity flow), instead of snap-filling on the dig.
 	_seed_flow_around(col, row, depth)
-	_build_chunk_collision.call_deferred(cx, cy)
+	_mark_collision_dirty(cx, cy)
 	_rebuild_chunk(cx, cy, key)
 	for nb in [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]:
 		var nx: int = nb[0]
@@ -851,7 +890,7 @@ func remove_top_voxel(col: int, row: int) -> bool:
 	# Per-voxel mesher reads occupancy directly, so there is no grid to update;
 	# just rebuild this chunk's mesh + collision and refresh the four neighbours
 	# (removing a voxel can expose their previously-hidden side faces).
-	_build_chunk_collision.call_deferred(cx, cy)
+	_mark_collision_dirty(cx, cy)
 	_rebuild_chunk(cx, cy, key)
 	for nb in [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]:
 		var nx: int = nb[0]
